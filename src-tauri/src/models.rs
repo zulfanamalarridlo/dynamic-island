@@ -1,22 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct IslandBounds {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) width: f64,
-    pub(crate) height: f64,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum IslandPosition {
-    TopCenter,
-    LeftCenter,
-    RightCenter,
-}
-
 #[derive(Serialize, Clone)]
 pub(crate) struct BatteryInfo {
     pub(crate) percentage: Option<f32>,
@@ -136,7 +120,7 @@ pub(crate) struct ClipboardHistoryItem {
     pub(crate) timestamp: u64,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SysData {
     pub(crate) battery: Option<f32>,
@@ -151,9 +135,12 @@ pub(crate) struct SysData {
     pub(crate) microphone_muted: bool,
     pub(crate) output_muted: bool,
     pub(crate) media: Option<MediaInfo>,
+    pub(crate) cpu_usage: Option<f32>,
+    pub(crate) memory_used_bytes: Option<u64>,
+    pub(crate) memory_total_bytes: Option<u64>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, PartialEq)]
 pub(crate) struct MediaInfo {
     pub(crate) title: String,
     pub(crate) artist: String,

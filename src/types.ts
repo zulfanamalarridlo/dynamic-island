@@ -31,6 +31,9 @@ export interface SysData {
   microphoneMuted: boolean;
   outputMuted: boolean;
   media: MediaInfo | null;
+  cpuUsage: number | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
 }
 
 export interface BatteryInfo {

@@ -13,8 +13,11 @@
     "windows": [
       {
         "label": "main",
-        "title": "dynamic-island",
+        "title": "",
+        "width": 92,
+        "height": 38,
         "fullscreen": true,
+        "visible": false,
         "decorations": false,
         "transparent": true,
         "backgroundColor": "#00000000",

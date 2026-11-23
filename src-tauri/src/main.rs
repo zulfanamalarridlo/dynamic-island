@@ -3,17 +3,22 @@
 
 use battery::Manager as BatteryManager;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs;
+use std::ffi::c_void;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
-use tauri::{Emitter, Manager};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{
+    Emitter, Manager,
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+};
 
 use base64::Engine as _;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
@@ -23,7 +28,12 @@ use windows::UI::Notifications::Management::{
     UserNotificationListener, UserNotificationListenerAccessStatus,
 };
 use windows::UI::Notifications::{KnownNotificationBindings, NotificationKinds};
-use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND, POINT};
+use windows::Win32::Foundation::{FILETIME, GlobalFree, HANDLE, HGLOBAL, HWND, POINT};
+use windows::Win32::Graphics::Gdi::{
+    BI_RGB, BITMAPINFO, BitBlt, CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC,
+    CreatePolygonRgn, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC,
+    SRCCOPY, SelectObject, SetWindowRgn, WINDING,
+};
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{
     IMMDeviceEnumerator, MMDeviceEnumerator, eCapture, eConsole, eRender,
@@ -33,28 +43,47 @@ use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
     SetClipboardData,
 };
-use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+use windows::Win32::System::Memory::{
+    GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
+};
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use windows::Win32::System::Shutdown::LockWorkStation;
+use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use windows::Win32::System::Threading::GetSystemTimes;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    SendInput, VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_LWIN, VK_NUMLOCK, VK_S, VK_SCROLL,
-    VK_SHIFT, VK_V, VK_X,
+    SendInput, VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_LWIN, VK_MENU, VK_NUMLOCK, VK_R, VK_S,
+    VK_SCROLL, VK_SHIFT, VK_V, VK_X,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, FindWindowW, GWL_STYLE, GetCursorPos, GetWindowLongW, SW_HIDE, SW_SHOW,
-    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongW, SetWindowPos,
-    ShowWindow, WINDOW_STYLE, WS_CAPTION, WS_THICKFRAME,
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
-use windows::core::{ComInterface, w};
+use windows::core::ComInterface;
 mod models;
 use models::*;
 
 static APP_SETTINGS_PATH: OnceLock<PathBuf> = OnceLock::new();
 static APP_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
-static ISLAND_BOUNDS: OnceLock<Mutex<IslandBounds>> = OnceLock::new();
-
+static APP_SETTINGS_CACHE: Mutex<Option<AppSettings>> = Mutex::new(None);
+static PENDING_SNIP_CAPTURE: Mutex<Option<(Instant, u32)>> = Mutex::new(None);
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CLICKUP_API_BASE: &str = "https://api.clickup.com/api/v2";
+
+fn command_no_window(program: &str) -> Command {
+    let mut command = Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
 
 fn app_settings_path() -> Result<&'static PathBuf, String> {
     APP_SETTINGS_PATH
@@ -63,16 +92,28 @@ fn app_settings_path() -> Result<&'static PathBuf, String> {
 }
 
 fn read_settings_unlocked() -> Result<AppSettings, String> {
-    let path = app_settings_path()?;
-    if !path.is_file() {
-        return Ok(AppSettings::default());
+    if let Ok(cache) = APP_SETTINGS_CACHE.lock() {
+        if let Some(settings) = cache.as_ref() {
+            return Ok(settings.clone());
+        }
     }
-    let contents = fs::read_to_string(path)
-        .map_err(|error| format!("Tidak dapat membaca settings.json: {error}"))?;
-    let mut settings: AppSettings = serde_json::from_str(&contents)
-        .map_err(|error| format!("Format settings.json tidak valid: {error}"))?;
-    for (key, value) in AppSettings::default().preferences {
-        settings.preferences.entry(key).or_insert(value);
+
+    let path = app_settings_path()?;
+    let settings = if !path.is_file() {
+        AppSettings::default()
+    } else {
+        let contents = fs::read_to_string(path)
+            .map_err(|error| format!("Tidak dapat membaca settings.json: {error}"))?;
+        let mut settings: AppSettings = serde_json::from_str(&contents)
+            .map_err(|error| format!("Format settings.json tidak valid: {error}"))?;
+        for (key, value) in AppSettings::default().preferences {
+            settings.preferences.entry(key).or_insert(value);
+        }
+        settings
+    };
+
+    if let Ok(mut cache) = APP_SETTINGS_CACHE.lock() {
+        *cache = Some(settings.clone());
     }
     Ok(settings)
 }
@@ -81,8 +122,18 @@ fn write_settings_unlocked(settings: &AppSettings) -> Result<(), String> {
     let path = app_settings_path()?;
     let contents = serde_json::to_string_pretty(settings)
         .map_err(|error| format!("Tidak dapat menyusun settings.json: {error}"))?;
-    fs::write(path, contents)
-        .map_err(|error| format!("Tidak dapat menyimpan settings.json: {error}"))
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, &contents)
+        .map_err(|error| format!("Tidak dapat menyimpan settings.json: {error}"))?;
+    if let Err(rename_error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        fs::write(path, contents)
+            .map_err(|error| format!("Tidak dapat menyimpan settings.json: {rename_error}; {error}"))?;
+    }
+    if let Ok(mut cache) = APP_SETTINGS_CACHE.lock() {
+        *cache = Some(settings.clone());
+    }
+    Ok(())
 }
 
 fn read_app_settings() -> Result<AppSettings, String> {
@@ -196,10 +247,15 @@ fn save_app_setting(key: String, value: serde_json::Value) -> Result<(), String>
     if !key.starts_with("di-") {
         return Err("Nama pengaturan aplikasi tidak valid".to_string());
     }
-    update_app_settings(|settings| {
-        settings.preferences.insert(key, value);
-        Ok(())
-    })
+    let _guard = APP_SETTINGS_LOCK
+        .lock()
+        .map_err(|_| "Pengunci settings.json gagal".to_string())?;
+    let mut settings = read_settings_unlocked()?;
+    if settings.preferences.get(&key) == Some(&value) {
+        return Ok(());
+    }
+    settings.preferences.insert(key, value);
+    write_settings_unlocked(&settings)
 }
 
 fn validate_clickup_api_key(token: &str) -> Result<(), String> {
@@ -268,7 +324,7 @@ async fn get_clickup_tasks(
     validate_clickup_list_id(&list_id)?;
 
     let token = read_clickup_token()?;
-    let client = reqwest::Client::new();
+    let client = http_client();
     let user = clickup_response(
         client
             .get(format!("{CLICKUP_API_BASE}/user"))
@@ -323,7 +379,7 @@ async fn create_clickup_tasks(
     }
 
     let token = read_clickup_token()?;
-    let client = reqwest::Client::new();
+    let client = http_client();
     let user = clickup_response(
         client
             .get(format!("{CLICKUP_API_BASE}/user"))
@@ -458,7 +514,7 @@ fn write_clipboard_text(text: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn get_display_brightness() -> Result<u8, String> {
-    let output = Command::new("powershell")
+    let output = command_no_window("powershell")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -483,7 +539,7 @@ fn set_display_brightness(level: u8) -> Result<(), String> {
     let script = format!(
         "$methods = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Select-Object -First 1; if (-not $methods) {{ throw 'No supported display brightness control was found.' }}; $result = $methods.WmiSetBrightness(1, {level}); if ($result.ReturnValue -ne 0) {{ throw \"Brightness update failed with code $($result.ReturnValue).\" }}"
     );
-    let output = Command::new("powershell")
+    let output = command_no_window("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .output()
         .map_err(|error| error.to_string())?;
@@ -494,41 +550,207 @@ fn set_display_brightness(level: u8) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-fn update_island_bounds(x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+fn append_region_arc(
+    points: &mut Vec<POINT>,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    start_angle: f64,
+    end_angle: f64,
+) {
+    const ARC_SEGMENTS: u32 = 12;
+    for step in 1..=ARC_SEGMENTS {
+        let progress = f64::from(step) / f64::from(ARC_SEGMENTS);
+        let angle = start_angle + (end_angle - start_angle) * progress;
+        points.push(POINT {
+            x: (center_x + radius * angle.cos()).round() as i32,
+            y: (center_y + radius * angle.sin()).round() as i32,
+        });
+    }
+}
+
+fn rounded_region_points(
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    radius_top_left: f64,
+    radius_top_right: f64,
+    radius_bottom_right: f64,
+    radius_bottom_left: f64,
+) -> Vec<POINT> {
+    let max_radius = f64::from((right - left).min(bottom - top)) / 2.0;
+    let radius_top_left = radius_top_left.clamp(0.0, max_radius);
+    let radius_top_right = radius_top_right.clamp(0.0, max_radius);
+    let radius_bottom_right = radius_bottom_right.clamp(0.0, max_radius);
+    let radius_bottom_left = radius_bottom_left.clamp(0.0, max_radius);
+
+    let left = f64::from(left);
+    let top = f64::from(top);
+    let right = f64::from(right);
+    let bottom = f64::from(bottom);
+    let mut points = Vec::with_capacity(50);
+    points.push(POINT {
+        x: (left + radius_top_left).round() as i32,
+        y: top.round() as i32,
+    });
+    points.push(POINT {
+        x: (right - radius_top_right).round() as i32,
+        y: top.round() as i32,
+    });
+    append_region_arc(
+        &mut points,
+        right - radius_top_right,
+        top + radius_top_right,
+        radius_top_right,
+        -std::f64::consts::FRAC_PI_2,
+        0.0,
+    );
+    points.push(POINT {
+        x: right.round() as i32,
+        y: (bottom - radius_bottom_right).round() as i32,
+    });
+    append_region_arc(
+        &mut points,
+        right - radius_bottom_right,
+        bottom - radius_bottom_right,
+        radius_bottom_right,
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+    );
+    points.push(POINT {
+        x: (left + radius_bottom_left).round() as i32,
+        y: bottom.round() as i32,
+    });
+    append_region_arc(
+        &mut points,
+        left + radius_bottom_left,
+        bottom - radius_bottom_left,
+        radius_bottom_left,
+        std::f64::consts::FRAC_PI_2,
+        std::f64::consts::PI,
+    );
+    points.push(POINT {
+        x: left.round() as i32,
+        y: (top + radius_top_left).round() as i32,
+    });
+    append_region_arc(
+        &mut points,
+        left + radius_top_left,
+        top + radius_top_left,
+        radius_top_left,
+        std::f64::consts::PI,
+        3.0 * std::f64::consts::FRAC_PI_2,
+    );
+    points
+}
+
+fn apply_island_window_region(
+    window: &tauri::WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    radius_top_left: f64,
+    radius_top_right: f64,
+    radius_bottom_right: f64,
+    radius_bottom_left: f64,
+) -> Result<(), String> {
     if !x.is_finite()
         || !y.is_finite()
         || !width.is_finite()
         || !height.is_finite()
-        || width < 0.0
-        || height < 0.0
+        || !radius_top_left.is_finite()
+        || !radius_top_right.is_finite()
+        || !radius_bottom_right.is_finite()
+        || !radius_bottom_left.is_finite()
+        || width <= 0.0
+        || height <= 0.0
+        || radius_top_left < 0.0
+        || radius_top_right < 0.0
+        || radius_bottom_right < 0.0
+        || radius_bottom_left < 0.0
     {
         return Err("Batas Dynamic Island tidak valid".to_string());
     }
 
-    let bounds = ISLAND_BOUNDS.get_or_init(|| Mutex::new(IslandBounds::default()));
-    *bounds
-        .lock()
-        .map_err(|error| format!("Tidak dapat memperbarui batas Dynamic Island: {error}"))? =
-        IslandBounds {
-            x,
-            y,
-            width,
-            height,
-        };
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|error| error.to_string())?
+        .max(0.1);
+    let window_size = window
+        .inner_size()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale_factor);
+    let left = x.max(0.0).min(window_size.width);
+    let top = y.max(0.0).min(window_size.height);
+    let right = (x + width).min(window_size.width).max(0.0);
+    let bottom = (y + height).min(window_size.height).max(0.0);
+    if right <= left || bottom <= top {
+        return Err("Area Dynamic Island berada di luar jendela".to_string());
+    }
+
+    let left = (left * scale_factor).floor() as i32;
+    let top = (top * scale_factor).floor() as i32;
+    let right = (right * scale_factor).ceil() as i32;
+    let bottom = (bottom * scale_factor).ceil() as i32;
+    let points = rounded_region_points(
+        left,
+        top,
+        right,
+        bottom,
+        radius_top_left * scale_factor,
+        radius_top_right * scale_factor,
+        radius_bottom_right * scale_factor,
+        radius_bottom_left * scale_factor,
+    );
+    let hwnd = window
+        .hwnd()
+        .map(|handle| HWND(handle.0 as isize))
+        .map_err(|error| error.to_string())?;
+    let region = unsafe { CreatePolygonRgn(&points, WINDING) };
+    if region.0 == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+
+    if unsafe { SetWindowRgn(hwnd, region, true) } == 0 {
+        let error = std::io::Error::last_os_error().to_string();
+        if !unsafe { DeleteObject(HGDIOBJ(region.0)) }.as_bool() {
+            return Err(format!(
+                "Gagal mengatur area Dynamic Island: {error}; gagal membersihkan region"
+            ));
+        }
+        return Err(format!("Gagal mengatur area Dynamic Island: {error}"));
+    }
     Ok(())
 }
 
 #[tauri::command]
-fn set_island_position(app: tauri::AppHandle, position: IslandPosition) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_always_on_top(true);
-    }
-
-    // Notify renderer to update the shell position
-    let _ = app.emit_to("main", "island-position-changed", position);
-
-    Ok(())
+fn set_island_window_region(
+    app: tauri::AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    radius_top_left: f64,
+    radius_top_right: f64,
+    radius_bottom_right: f64,
+    radius_bottom_left: f64,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Jendela utama Dynamic Island tidak ditemukan".to_string())?;
+    apply_island_window_region(
+        &window,
+        x,
+        y,
+        width,
+        height,
+        radius_top_left,
+        radius_top_right,
+        radius_bottom_right,
+        radius_bottom_left,
+    )
 }
 
 #[tauri::command]
@@ -536,8 +758,11 @@ fn lock_windows() -> Result<(), String> {
     unsafe { LockWorkStation() }.map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-fn open_snipping_tool() -> Result<(), String> {
+fn send_keyboard_shortcut(
+    modifiers: &[VIRTUAL_KEY],
+    key: VIRTUAL_KEY,
+    shortcut_name: &str,
+) -> Result<(), String> {
     let key_input = |key: VIRTUAL_KEY, flags| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -550,20 +775,446 @@ fn open_snipping_tool() -> Result<(), String> {
             },
         },
     };
-    let inputs = [
-        key_input(VK_LWIN, Default::default()),
-        key_input(VK_SHIFT, Default::default()),
-        key_input(VK_S, Default::default()),
-        key_input(VK_S, KEYEVENTF_KEYUP),
-        key_input(VK_SHIFT, KEYEVENTF_KEYUP),
-        key_input(VK_LWIN, KEYEVENTF_KEYUP),
-    ];
+    let mut inputs = Vec::with_capacity(modifiers.len() * 2 + 2);
+    inputs.extend(
+        modifiers
+            .iter()
+            .copied()
+            .map(|modifier| key_input(modifier, Default::default())),
+    );
+    inputs.push(key_input(key, Default::default()));
+    inputs.push(key_input(key, KEYEVENTF_KEYUP));
+    inputs.extend(
+        modifiers
+            .iter()
+            .rev()
+            .copied()
+            .map(|modifier| key_input(modifier, KEYEVENTF_KEYUP)),
+    );
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent == inputs.len() as u32 {
         Ok(())
     } else {
-        Err("Windows tidak menerima shortcut Win + Shift + S".to_string())
+        Err(format!("Windows tidak menerima shortcut {shortcut_name}"))
     }
+}
+
+#[tauri::command]
+fn open_snipping_tool() -> Result<(), String> {
+    {
+        let mut pending = PENDING_SNIP_CAPTURE
+            .lock()
+            .map_err(|error| error.to_string())?;
+        *pending = Some((Instant::now() + Duration::from_secs(120), unsafe {
+            GetClipboardSequenceNumber()
+        }));
+    }
+
+    let result = send_keyboard_shortcut(&[VK_LWIN, VK_SHIFT], VK_S, "Win + Shift + S");
+    if result.is_err() {
+        let mut pending = PENDING_SNIP_CAPTURE
+            .lock()
+            .map_err(|error| error.to_string())?;
+        *pending = None;
+    }
+    result
+}
+
+fn encode_bmp_from_bgra(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, String> {
+    let width_usize = usize::try_from(width).map_err(|error| error.to_string())?;
+    let height_usize = usize::try_from(height).map_err(|error| error.to_string())?;
+    let expected_pixel_bytes = width_usize
+        .checked_mul(height_usize)
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+        .ok_or_else(|| "Ukuran screenshot terlalu besar".to_string())?;
+    if width == 0 || height == 0 || pixels.len() != expected_pixel_bytes {
+        return Err("Data screenshot tidak valid".to_string());
+    }
+
+    let row_bytes = width_usize
+        .checked_mul(3)
+        .ok_or_else(|| "Ukuran screenshot terlalu besar".to_string())?;
+    let row_stride = row_bytes
+        .checked_add(3)
+        .map(|size| size & !3)
+        .ok_or_else(|| "Ukuran screenshot terlalu besar".to_string())?;
+    let image_bytes = row_stride
+        .checked_mul(height_usize)
+        .ok_or_else(|| "Ukuran screenshot terlalu besar".to_string())?;
+    let file_size = 54usize
+        .checked_add(image_bytes)
+        .filter(|size| *size <= u32::MAX as usize)
+        .ok_or_else(|| "Ukuran screenshot melebihi batas format BMP".to_string())?;
+    let signed_height = i32::try_from(height)
+        .map_err(|error| error.to_string())?
+        .checked_neg()
+        .ok_or_else(|| "Tinggi screenshot tidak valid".to_string())?;
+
+    let mut output = Vec::with_capacity(file_size);
+    output.extend_from_slice(b"BM");
+    output.extend_from_slice(&(file_size as u32).to_le_bytes());
+    output.extend_from_slice(&[0; 4]);
+    output.extend_from_slice(&54u32.to_le_bytes());
+    output.extend_from_slice(&40u32.to_le_bytes());
+    output.extend_from_slice(&(width as i32).to_le_bytes());
+    output.extend_from_slice(&signed_height.to_le_bytes());
+    output.extend_from_slice(&1u16.to_le_bytes());
+    output.extend_from_slice(&24u16.to_le_bytes());
+    output.extend_from_slice(&0u32.to_le_bytes());
+    output.extend_from_slice(&(image_bytes as u32).to_le_bytes());
+    output.extend_from_slice(&[0; 16]);
+
+    for row in 0..height_usize {
+        let source_row = row * width_usize * 4;
+        for column in 0..width_usize {
+            let pixel = source_row + column * 4;
+            output.extend_from_slice(&pixels[pixel..pixel + 3]);
+        }
+        while (output.len() - 54) % row_stride != 0 {
+            output.push(0);
+        }
+    }
+    Ok(output)
+}
+
+fn capture_full_screen_bmp() -> Result<Vec<u8>, String> {
+    let (screen_x, screen_y, width, height) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+    if width <= 0 || height <= 0 {
+        return Err("Ukuran layar tidak valid".to_string());
+    }
+
+    let width_usize = usize::try_from(width).map_err(|error| error.to_string())?;
+    let height_usize = usize::try_from(height).map_err(|error| error.to_string())?;
+    let buffer_size = width_usize
+        .checked_mul(height_usize)
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+        .ok_or_else(|| "Ukuran layar terlalu besar".to_string())?;
+    if buffer_size > u32::MAX as usize {
+        return Err("Ukuran layar melebihi batas format screenshot".to_string());
+    }
+
+    let screen_dc = unsafe { GetDC(HWND(0)) };
+    if screen_dc.is_invalid() {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    let memory_dc = unsafe { CreateCompatibleDC(screen_dc) };
+    if memory_dc.is_invalid() {
+        let error = std::io::Error::last_os_error().to_string();
+        unsafe {
+            ReleaseDC(HWND(0), screen_dc);
+        }
+        return Err(error);
+    }
+    let bitmap = unsafe { CreateCompatibleBitmap(screen_dc, width, height) };
+    if bitmap.is_invalid() {
+        let error = std::io::Error::last_os_error().to_string();
+        unsafe {
+            DeleteDC(memory_dc);
+            ReleaseDC(HWND(0), screen_dc);
+        }
+        return Err(error);
+    }
+
+    let result = unsafe {
+        let original = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
+        if original.is_invalid() {
+            Err(std::io::Error::last_os_error().to_string())
+        } else {
+            let blit = BitBlt(
+                memory_dc,
+                0,
+                0,
+                width,
+                height,
+                screen_dc,
+                screen_x,
+                screen_y,
+                windows::Win32::Graphics::Gdi::ROP_CODE(SRCCOPY.0 | CAPTUREBLT.0),
+            );
+            let restore = SelectObject(memory_dc, original);
+            if restore.is_invalid() {
+                Err(std::io::Error::last_os_error().to_string())
+            } else if let Err(error) = blit {
+                Err(error.to_string())
+            } else {
+                let mut info = BITMAPINFO::default();
+                info.bmiHeader.biSize =
+                    std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>() as u32;
+                info.bmiHeader.biWidth = width;
+                info.bmiHeader.biHeight = -height;
+                info.bmiHeader.biPlanes = 1;
+                info.bmiHeader.biBitCount = 32;
+                info.bmiHeader.biCompression = BI_RGB.0;
+                info.bmiHeader.biSizeImage = buffer_size as u32;
+                let mut pixels = vec![0u8; buffer_size];
+                let copied_lines = GetDIBits(
+                    screen_dc,
+                    bitmap,
+                    0,
+                    height as u32,
+                    Some(pixels.as_mut_ptr() as *mut std::ffi::c_void),
+                    &mut info,
+                    DIB_RGB_COLORS,
+                );
+                if copied_lines != height {
+                    Err(std::io::Error::last_os_error().to_string())
+                } else {
+                    encode_bmp_from_bgra(width as u32, height as u32, &pixels)
+                }
+            }
+        }
+    };
+
+    let delete_memory_dc = unsafe { DeleteDC(memory_dc) }.as_bool();
+    let delete_bitmap = unsafe { DeleteObject(HGDIOBJ(bitmap.0)) }.as_bool();
+    let release_screen_dc = unsafe { ReleaseDC(HWND(0), screen_dc) } != 0;
+    match result {
+        Ok(image) if delete_bitmap && delete_memory_dc && release_screen_dc => Ok(image),
+        Ok(_) => Err("Tidak dapat membersihkan sumber screenshot Windows".to_string()),
+        Err(error) => Err(error),
+    }
+}
+
+fn screenshot_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("screenshots");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Tidak dapat membuat folder screenshot: {error}"))?;
+    Ok(directory)
+}
+
+fn save_capture_file(app: &tauri::AppHandle, kind: &str, bytes: &[u8]) -> Result<String, String> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis();
+    let directory = screenshot_directory(app)?;
+    for suffix in 0..1000 {
+        let file_name = if suffix == 0 {
+            format!("{kind}-{timestamp}.bmp")
+        } else {
+            format!("{kind}-{timestamp}-{suffix}.bmp")
+        };
+        let path = directory.join(file_name);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes) {
+                    if let Err(cleanup_error) = fs::remove_file(&path) {
+                        eprintln!(
+                            "Gagal membersihkan file screenshot yang tidak lengkap: {cleanup_error}"
+                        );
+                    }
+                    return Err(format!("Tidak dapat menyimpan screenshot: {error}"));
+                }
+                return Ok(path.to_string_lossy().into_owned());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(format!("Tidak dapat menyimpan screenshot: {error}"));
+            }
+        }
+    }
+    Err("Tidak dapat membuat nama file screenshot yang unik".to_string())
+}
+
+fn wrap_dib_as_bmp(dib: &[u8]) -> Result<Vec<u8>, String> {
+    if dib.len() < 40 {
+        return Err("Data snip pada clipboard tidak valid".to_string());
+    }
+    let header_size = u32::from_le_bytes(dib[0..4].try_into().unwrap()) as usize;
+    let width = i32::from_le_bytes(dib[4..8].try_into().unwrap());
+    let height = i32::from_le_bytes(dib[8..12].try_into().unwrap());
+    let bit_count = u16::from_le_bytes(dib[14..16].try_into().unwrap());
+    let compression = u32::from_le_bytes(dib[16..20].try_into().unwrap());
+    let color_count = u32::from_le_bytes(dib[32..36].try_into().unwrap()) as usize;
+    if header_size < 40 || header_size > dib.len() || width <= 0 || height == 0 || bit_count == 0 {
+        return Err("Format snip pada clipboard tidak didukung".to_string());
+    }
+
+    let masks_size = if header_size == 40 {
+        match compression {
+            3 => 12usize,
+            6 => 16usize,
+            _ => 0usize,
+        }
+    } else {
+        0
+    };
+    let palette_entries = if bit_count <= 8 {
+        if color_count > 0 {
+            color_count
+        } else {
+            1usize << bit_count
+        }
+    } else {
+        0
+    };
+    let pixel_offset = header_size
+        .checked_add(masks_size)
+        .and_then(|offset| offset.checked_add(palette_entries.checked_mul(4)?))
+        .filter(|offset| *offset <= dib.len())
+        .ok_or_else(|| "Data snip pada clipboard tidak lengkap".to_string())?;
+    let file_size = 14usize
+        .checked_add(dib.len())
+        .filter(|size| *size <= u32::MAX as usize)
+        .ok_or_else(|| "Ukuran snip melebihi batas format BMP".to_string())?;
+    let pixel_offset = 14usize
+        .checked_add(pixel_offset)
+        .filter(|offset| *offset <= u32::MAX as usize)
+        .ok_or_else(|| "Offset data snip tidak valid".to_string())?;
+
+    let mut output = Vec::with_capacity(file_size);
+    output.extend_from_slice(b"BM");
+    output.extend_from_slice(&(file_size as u32).to_le_bytes());
+    output.extend_from_slice(&[0; 4]);
+    output.extend_from_slice(&(pixel_offset as u32).to_le_bytes());
+    output.extend_from_slice(dib);
+    Ok(output)
+}
+
+fn get_clipboard_dib() -> Result<Option<Vec<u8>>, String> {
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return Ok(None);
+        }
+        let result = (|| {
+            let handle = GetClipboardData(17).or_else(|_| GetClipboardData(8));
+            let Ok(handle) = handle else {
+                return Ok(None);
+            };
+            let global = HGLOBAL(handle.0 as *mut std::ffi::c_void);
+            let size = GlobalSize(global);
+            if !(40..=512 * 1024 * 1024).contains(&size) {
+                return Err("Ukuran snip pada clipboard tidak valid".to_string());
+            }
+            let pointer = GlobalLock(global);
+            if pointer.is_null() {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            let dib = std::slice::from_raw_parts(pointer as *const u8, size).to_vec();
+            if let Err(error) = GlobalUnlock(global) {
+                if error.code().0 != 0 {
+                    return Err(error.to_string());
+                }
+            }
+            Ok(Some(dib))
+        })();
+        let close_result = CloseClipboard();
+        if let Err(error) = close_result {
+            return Err(error.to_string());
+        }
+        result
+    }
+}
+
+fn pending_snip_capture() -> Result<bool, String> {
+    let mut pending = PENDING_SNIP_CAPTURE
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if pending.is_some_and(|(expires_at, _)| Instant::now() >= expires_at) {
+        *pending = None;
+    }
+    Ok(pending.is_some())
+}
+
+fn snip_clipboard_sequence() -> Result<Option<u32>, String> {
+    let pending = PENDING_SNIP_CAPTURE
+        .lock()
+        .map_err(|error| error.to_string())?;
+    Ok(pending.map(|(_, sequence)| sequence))
+}
+
+fn clear_pending_snip_capture() -> Result<(), String> {
+    *PENDING_SNIP_CAPTURE
+        .lock()
+        .map_err(|error| error.to_string())? = None;
+    Ok(())
+}
+
+fn save_pending_snip_capture(app: &tauri::AppHandle) -> Result<Option<String>, String> {
+    let Some(initial_sequence) = snip_clipboard_sequence()? else {
+        return Ok(None);
+    };
+    if unsafe { GetClipboardSequenceNumber() } == initial_sequence {
+        return Ok(None);
+    }
+    let Some(dib) = get_clipboard_dib()? else {
+        return Ok(None);
+    };
+    let bmp = wrap_dib_as_bmp(&dib)?;
+    let path = save_capture_file(app, "snip", &bmp)?;
+    clear_pending_snip_capture()?;
+    Ok(Some(path))
+}
+
+#[tauri::command]
+fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
+    let image = capture_full_screen_bmp()?;
+    let path = save_capture_file(&app, "screenshot", &image)?;
+    if let Err(error) = app.emit("capture-saved", path.clone()) {
+        eprintln!("Gagal memperbarui daftar screenshot: {error}");
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+fn list_capture_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let directory = screenshot_directory(&app)?;
+    let mut files = Vec::new();
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| format!("Tidak dapat membaca folder screenshot: {error}"))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("bmp")
+        {
+            let modified = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .map_err(|error| format!("Tidak dapat membaca waktu file screenshot: {error}"))?;
+            files.push((modified, path.to_string_lossy().into_owned()));
+        }
+    }
+    files.sort_by(|left, right| right.0.cmp(&left.0));
+    Ok(files.into_iter().map(|(_, path)| path).collect())
+}
+
+#[tauri::command]
+fn delete_capture_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let directory = screenshot_directory(&app)?;
+    let canonical_directory = fs::canonicalize(&directory).map_err(|error| error.to_string())?;
+    let canonical_file = fs::canonicalize(&path).map_err(|error| error.to_string())?;
+    let file_name = canonical_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Nama file screenshot tidak valid".to_string())?;
+    if !canonical_file.starts_with(&canonical_directory)
+        || canonical_file
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("bmp")
+        || !(file_name.starts_with("screenshot-") || file_name.starts_with("snip-"))
+    {
+        return Err("File yang dipilih bukan hasil screenshot aplikasi".to_string());
+    }
+    fs::remove_file(canonical_file)
+        .map_err(|error| format!("Tidak dapat menghapus screenshot: {error}"))
+}
+
+#[tauri::command]
+fn toggle_screen_recording() -> Result<(), String> {
+    send_keyboard_shortcut(&[VK_LWIN, VK_MENU], VK_R, "Win + Alt + R")
 }
 
 #[tauri::command]
@@ -1041,22 +1692,6 @@ fn get_network_info() -> NetworkInfo {
 }
 
 #[tauri::command]
-fn toggle_windows_tray(show: bool) -> Result<(), String> {
-    unsafe {
-        let taskbar = FindWindowW(w!("Shell_TrayWnd"), None);
-        if taskbar.0 != 0 {
-            let tray = FindWindowExW(taskbar, None, w!("TrayNotifyWnd"), None);
-            if tray.0 != 0 {
-                let cmd_show = if show { SW_SHOW } else { SW_HIDE };
-                ShowWindow(tray, cmd_show);
-                return Ok(());
-            }
-        }
-        Err("System Tray tidak ditemukan".to_string())
-    }
-}
-
-#[tauri::command]
 fn toggle_wifi(enable: bool) -> Result<(), String> {
     let state = if enable { "enable" } else { "disable" };
     Command::new("netsh")
@@ -1116,13 +1751,99 @@ fn connect_wifi(ssid: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn filetime_to_u64(value: FILETIME) -> u64 {
+    (u64::from(value.dwHighDateTime) << 32) | u64::from(value.dwLowDateTime)
+}
+
+fn read_cpu_times() -> Result<(u64, u64, u64), String> {
+    let mut idle = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    unsafe {
+        GetSystemTimes(Some(&mut idle), Some(&mut kernel), Some(&mut user))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok((
+        filetime_to_u64(idle),
+        filetime_to_u64(kernel),
+        filetime_to_u64(user),
+    ))
+}
+
+fn calculate_cpu_usage(previous: (u64, u64, u64), current: (u64, u64, u64)) -> Option<f32> {
+    let idle_delta = current.0.saturating_sub(previous.0);
+    let kernel_delta = current.1.saturating_sub(previous.1);
+    let user_delta = current.2.saturating_sub(previous.2);
+    let total_delta = kernel_delta.saturating_add(user_delta);
+    if total_delta == 0 {
+        return None;
+    }
+
+    let busy_delta = total_delta.saturating_sub(idle_delta);
+    Some((busy_delta as f64 / total_delta as f64 * 100.0).clamp(0.0, 100.0) as f32)
+}
+
+fn read_memory_usage() -> Result<(u64, u64), String> {
+    let mut status = MEMORYSTATUSEX::default();
+    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    unsafe { GlobalMemoryStatusEx(&mut status) }.map_err(|error| error.to_string())?;
+    Ok((
+        status.ullTotalPhys.saturating_sub(status.ullAvailPhys),
+        status.ullTotalPhys,
+    ))
+}
+
 fn start_system_monitor(app_handle: tauri::AppHandle) {
     thread::spawn(move || {
         let mut previous_wifi: Option<(bool, String)> = None;
         let mut previous_ac = is_ac_connected();
         let mut low_battery_notified = false;
         let mut full_battery_notified = false;
+        let mut previous_cpu_times = None;
+        let mut next_snip_capture_check = Instant::now();
         loop {
+            if Instant::now() >= next_snip_capture_check {
+                next_snip_capture_check = Instant::now() + Duration::from_millis(250);
+                match pending_snip_capture() {
+                    Ok(true) => match save_pending_snip_capture(&app_handle) {
+                        Ok(Some(path)) => {
+                            if let Err(error) = app_handle.emit("capture-saved", path) {
+                                eprintln!("Gagal memperbarui daftar snip: {error}");
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            eprintln!("Gagal menyimpan snip: {error}");
+                            if let Err(clear_error) = clear_pending_snip_capture() {
+                                eprintln!("Gagal membatalkan snip tertunda: {clear_error}");
+                            }
+                        }
+                    },
+                    Ok(false) => {}
+                    Err(error) => eprintln!("Gagal memeriksa snip tertunda: {error}"),
+                }
+            }
+
+            let cpu_usage = match read_cpu_times() {
+                Ok(current) => {
+                    let usage = previous_cpu_times
+                        .and_then(|previous| calculate_cpu_usage(previous, current));
+                    previous_cpu_times = Some(current);
+                    usage
+                }
+                Err(error) => {
+                    eprintln!("Gagal membaca penggunaan CPU: {error}");
+                    previous_cpu_times = None;
+                    None
+                }
+            };
+            let (memory_used_bytes, memory_total_bytes) = match read_memory_usage() {
+                Ok((used, total)) => (Some(used), Some(total)),
+                Err(error) => {
+                    eprintln!("Gagal membaca penggunaan memori: {error}");
+                    (None, None)
+                }
+            };
             let (battery, battery_error) = match get_battery_info() {
                 Ok(battery) => (battery, None),
                 Err(error) => {
@@ -1211,6 +1932,9 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 microphone_muted,
                 output_muted,
                 media: get_current_media_info(),
+                cpu_usage,
+                memory_used_bytes,
+                memory_total_bytes,
             };
 
             app_handle.emit("system-update", payload).unwrap_or(());
@@ -1302,79 +2026,6 @@ fn get_clipboard_text() -> Option<String> {
         let _ = CloseClipboard();
         result
     }
-}
-
-fn start_mouse_tracker(app_handle: tauri::AppHandle) {
-    thread::spawn(move || {
-        let mut last_in_island: Option<bool> = None;
-
-        loop {
-            unsafe {
-                let mut pos = POINT { x: 0, y: 0 };
-                if GetCursorPos(&mut pos).is_ok() {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let bounds = ISLAND_BOUNDS
-                            .get_or_init(|| Mutex::new(IslandBounds::default()))
-                            .lock()
-                            .map(|bounds| *bounds)
-                            .unwrap_or_default();
-                        let in_island = if bounds.width > 0.0 && bounds.height > 0.0 {
-                            match (window.outer_position(), window.scale_factor()) {
-                                (Ok(origin), Ok(scale)) => {
-                                    let x = origin.x as f64 + bounds.x * scale;
-                                    let y = origin.y as f64 + bounds.y * scale;
-                                    let cursor_x = pos.x as f64;
-                                    let cursor_y = pos.y as f64;
-                                    cursor_x >= x
-                                        && cursor_x < x + bounds.width * scale
-                                        && cursor_y >= y
-                                        && cursor_y < y + bounds.height * scale
-                                }
-                                _ => false,
-                            }
-                        } else {
-                            false
-                        };
-
-                        if last_in_island != Some(in_island) {
-                            match window.set_ignore_cursor_events(!in_island) {
-                                Ok(()) => last_in_island = Some(in_island),
-                                Err(error) => {
-                                    eprintln!(
-                                        "Gagal mengatur click-through Dynamic Island: {error}"
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-    });
-}
-
-fn remove_native_window_frame(window: &tauri::WebviewWindow) -> Result<(), String> {
-    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
-    let hwnd = HWND(hwnd.0 as isize);
-
-    unsafe {
-        let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
-        let style = style & !(WS_CAPTION | WS_THICKFRAME);
-        SetWindowLongW(hwnd, GWL_STYLE, style.0 as i32);
-        SetWindowPos(
-            hwnd,
-            None,
-            0,
-            0,
-            0,
-            0,
-            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
-        )
-        .map_err(|error| error.to_string())?;
-    }
-
-    Ok(())
 }
 
 fn initialize_app_settings(app: &tauri::AppHandle) -> Result<(), String> {
@@ -1472,7 +2123,61 @@ fn initialize_app_settings(app: &tauri::AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_legacy_clickup_settings;
+    use super::{
+        calculate_cpu_usage, encode_bmp_from_bgra, parse_legacy_clickup_settings,
+        rounded_region_points, wrap_dib_as_bmp,
+    };
+
+    #[test]
+    fn calculates_cpu_usage_from_idle_kernel_and_user_deltas() {
+        assert_eq!(
+            calculate_cpu_usage((100, 200, 300), (120, 240, 340)),
+            Some(75.0)
+        );
+        assert_eq!(calculate_cpu_usage((100, 200, 300), (100, 200, 300)), None);
+    }
+
+    #[test]
+    fn rounded_region_points_preserve_individual_corner_radii() {
+        let points = rounded_region_points(0, 0, 100, 50, 0.0, 10.0, 20.0, 5.0);
+
+        assert_eq!((points[0].x, points[0].y), (0, 0));
+        assert_eq!((points[1].x, points[1].y), (90, 0));
+        assert_eq!((points[14].x, points[14].y), (100, 30));
+    }
+
+    #[test]
+    fn encodes_top_down_bgra_pixels_as_padded_bmp_rows() {
+        let bmp = encode_bmp_from_bgra(1, 2, &[1, 2, 3, 255, 4, 5, 6, 255])
+            .expect("valid pixel data should encode");
+
+        assert_eq!(&bmp[0..2], b"BM");
+        assert_eq!(i32::from_le_bytes(bmp[22..26].try_into().unwrap()), -2);
+        assert_eq!(&bmp[54..62], &[1, 2, 3, 0, 4, 5, 6, 0]);
+    }
+
+    #[test]
+    fn wraps_clipboard_dib_with_bmp_file_headers() {
+        let mut dib = vec![0; 44];
+        dib[0..4].copy_from_slice(&40u32.to_le_bytes());
+        dib[4..8].copy_from_slice(&1i32.to_le_bytes());
+        dib[8..12].copy_from_slice(&1i32.to_le_bytes());
+        dib[12..14].copy_from_slice(&1u16.to_le_bytes());
+        dib[14..16].copy_from_slice(&24u16.to_le_bytes());
+        dib[40..44].copy_from_slice(&[1, 2, 3, 0]);
+
+        let bmp = wrap_dib_as_bmp(&dib).expect("valid DIB should wrap");
+
+        assert_eq!(&bmp[0..2], b"BM");
+        assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 54);
+        assert_eq!(u32::from_le_bytes(bmp[2..6].try_into().unwrap()), 58);
+        assert_eq!(&bmp[54..], &dib[40..]);
+    }
+
+    #[test]
+    fn rejects_truncated_clipboard_dib() {
+        assert!(wrap_dib_as_bmp(&[0; 16]).is_err());
+    }
 
     #[test]
     fn parses_legacy_clickup_settings_with_utf8_bom() {
@@ -1501,7 +2206,7 @@ mod tests {
 }
 
 fn enable_windows_startup(executable: &std::path::Path) -> Result<(), String> {
-    let command_value = format!("\"{}\" --background", executable.display());
+    let command_value = format!("\"{}\"", executable.display());
     let output = Command::new("reg.exe")
         .args([
             "add",
@@ -1525,46 +2230,42 @@ fn enable_windows_startup(executable: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-fn create_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Buka Dynamic Island", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Keluar", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &separator, &quit])?;
-    let mut builder = TrayIconBuilder::new()
-        .menu(&menu)
-        .tooltip("Dynamic Island")
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-            ) {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-        });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
+fn open_settings_from_tray(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        eprintln!("Tidak dapat membuka pengaturan tray: jendela utama tidak ditemukan");
+        return;
+    };
+    if let Err(error) = window.show() {
+        eprintln!("Tidak dapat menampilkan jendela dari tray: {error}");
     }
-    let tray = builder.build(app)?;
-    app.manage(tray);
-    Ok(())
+    if let Err(error) = window.set_focus() {
+        eprintln!("Tidak dapat memfokuskan jendela dari tray: {error}");
+    }
+    if let Err(error) = app.emit("tray-open-settings", ()) {
+        eprintln!("Tidak dapat membuka halaman pengaturan dari tray: {error}");
+    }
+}
+
+fn toggle_window_from_tray(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        eprintln!("Tidak dapat mengubah visibilitas tray: jendela utama tidak ditemukan");
+        return;
+    };
+    match window.is_visible() {
+        Ok(true) => {
+            if let Err(error) = window.hide() {
+                eprintln!("Tidak dapat menyembunyikan Dynamic Island dari tray: {error}");
+            }
+        }
+        Ok(false) => {
+            if let Err(error) = window.show() {
+                eprintln!("Tidak dapat menampilkan Dynamic Island dari tray: {error}");
+            } else if let Err(error) = window.set_focus() {
+                eprintln!("Tidak dapat memfokuskan Dynamic Island dari tray: {error}");
+            }
+        }
+        Err(error) => eprintln!("Tidak dapat membaca visibilitas jendela dari tray: {error}"),
+    }
 }
 
 fn main() {
@@ -1575,43 +2276,67 @@ fn main() {
             initialize_app_settings(&app_handle).map_err(std::io::Error::other)?;
             let executable = std::env::current_exe()?;
             enable_windows_startup(&executable).map_err(std::io::Error::other)?;
-            create_system_tray(app)?;
 
             // Jalankan thread pemantauan
             start_system_monitor(app_handle.clone());
             start_clipboard_activity_monitor(app_handle.clone());
             start_windows_notification_monitor(app_handle.clone());
 
-            // Sembunyikan taskbar bawaan Windows (opsional)
-            let _ = toggle_windows_tray(false);
+            let window = app
+                .get_webview_window("main")
+                .ok_or_else(|| std::io::Error::other("Jendela utama tidak ditemukan"))?;
+            window.set_fullscreen(true)?;
+            window.set_always_on_top(true)?;
+            window.set_resizable(false)?;
+            let monitor = window
+                .current_monitor()?
+                .or(window.primary_monitor()?)
+                .ok_or_else(|| std::io::Error::other("Monitor utama tidak ditemukan"))?;
+            let scale_factor = monitor.scale_factor();
+            let monitor_size = monitor.size().to_logical::<f64>(scale_factor);
+            apply_island_window_region(
+                &window,
+                (monitor_size.width - 92.0).max(0.0) / 2.0,
+                0.0,
+                92.0,
+                38.0,
+                0.0,
+                0.0,
+                12.0,
+                12.0,
+            )
+            .map_err(std::io::Error::other)?;
 
-            // Atur window untuk mode fullscreen + always on top
-            let window = app.get_webview_window("main").unwrap();
-            window.set_always_on_top(true).unwrap();
-            window.set_ignore_cursor_events(true).unwrap();
-
-            window.set_decorations(false).unwrap();
-            remove_native_window_frame(&window).map_err(std::io::Error::other)?;
-            window.set_resizable(false).unwrap();
-            start_mouse_tracker(app_handle.clone());
-
-            let window_clone = window.clone();
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window_clone.hide();
-                    return;
-                }
-                if let tauri::WindowEvent::Focused(_) = event {
-                    let _ = window_clone.set_decorations(false);
-                    if let Err(error) = remove_native_window_frame(&window_clone) {
-                        eprintln!("Gagal menghilangkan frame jendela Dynamic Island: {error}");
-                    }
-                }
-            });
-            if std::env::args_os().any(|argument| argument == "--background") {
-                window.hide()?;
+            let icon = app.default_window_icon().cloned().ok_or_else(|| {
+                std::io::Error::other("Ikon aplikasi untuk system tray tidak ditemukan")
+            })?;
+            let settings_item =
+                MenuItem::with_id(app, "tray-settings", "Pengaturan", true, None::<&str>)?;
+            let visibility_item = MenuItem::with_id(
+                app,
+                "tray-toggle-visibility",
+                "Tampilkan / sembunyikan",
+                true,
+                None::<&str>,
+            )?;
+            let exit_item = MenuItem::with_id(app, "tray-exit", "Keluar", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&settings_item, &visibility_item, &exit_item])?;
+            let tray_icon = TrayIconBuilder::with_id("dynamic-island-tray")
+                .icon(icon)
+                .menu(&tray_menu)
+                .tooltip("Dynamic Island")
+                .show_menu_on_left_click(true)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "tray-settings" => open_settings_from_tray(app),
+                    "tray-toggle-visibility" => toggle_window_from_tray(app),
+                    "tray-exit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
+            if !app.manage(tray_icon) {
+                return Err(std::io::Error::other("Tidak dapat menyimpan ikon system tray").into());
             }
+            window.show()?;
 
             Ok(())
         })
@@ -1627,15 +2352,17 @@ fn main() {
             set_display_brightness,
             request_windows_notification_access,
             set_system_volume,
-            toggle_windows_tray,
             toggle_wifi,
             set_power_plan,
             scan_wifi,
             connect_wifi,
-            update_island_bounds,
-            set_island_position,
+            set_island_window_region,
             lock_windows,
             open_snipping_tool,
+            take_screenshot,
+            list_capture_files,
+            delete_capture_file,
+            toggle_screen_recording,
             get_clickup_config,
             save_clickup_config,
             load_app_settings,

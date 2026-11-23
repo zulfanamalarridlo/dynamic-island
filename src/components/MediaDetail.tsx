@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlignLeft, Music2, Pause, Play, SkipBack, SkipForward, X } from 'lucide-react';
+import { AlignLeft, Music2, Pause, Pin, Play, SkipBack, SkipForward, X } from 'lucide-react';
 import LyricsPanel from '../LyricsPanel';
 import { localize, type AppLanguage } from '../i18n';
 import type { MediaInfo, MediaProvider } from '../types';
@@ -10,17 +10,19 @@ interface MediaDetailProps {
   artwork: string | null;
   language: AppLanguage;
   showLyrics: boolean;
+  pinned: boolean;
   travelX: number;
   travelY: number;
   transition: { duration: number; ease: number[] };
   onToggleLyrics: () => void;
+  onTogglePin: () => void;
   onReturnToLauncher: () => void;
   onMediaAction: (action: 'previous' | 'playPause' | 'next') => void;
 }
 
 export default function MediaDetail({
-  media, provider, artwork, language, showLyrics, travelX, travelY, transition,
-  onToggleLyrics, onReturnToLauncher, onMediaAction
+  media, provider, artwork, language, showLyrics, pinned, travelX, travelY, transition,
+  onToggleLyrics, onTogglePin, onReturnToLauncher, onMediaAction
 }: MediaDetailProps) {
   const progress = media.duration_seconds > 0
     ? Math.max(0, Math.min(100, media.position_seconds / media.duration_seconds * 100))
@@ -80,7 +82,18 @@ export default function MediaDetail({
           </button>
         )}
         <button
-          className="auto-notice__dismiss"
+          type="button"
+          className={`detail-action-button detail-action-button--pin${pinned ? ' is-active' : ''}`}
+          aria-label={pinned ? localize(language, 'Lepas sematan musik', 'Unpin music') : localize(language, 'Sematkan musik', 'Pin music')}
+          aria-pressed={pinned}
+          title={pinned ? localize(language, 'Lepas sematan musik', 'Unpin music') : localize(language, 'Sematkan musik', 'Pin music')}
+          onClick={onTogglePin}
+        >
+          <Pin size={14} />
+        </button>
+        <button
+          type="button"
+          className="detail-action-button"
           aria-label={localize(language, 'Tutup Now Playing', 'Close Now Playing')}
           title={localize(language, 'Tutup Now Playing', 'Close Now Playing')}
           onClick={(event) => { event.stopPropagation(); onReturnToLauncher(); }}

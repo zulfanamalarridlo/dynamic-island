@@ -1,16 +1,18 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Battery, BatteryCharging, Cpu, HardDrive, Music2, Wifi } from 'lucide-react';
 import ToolsPanel, { type ClipboardItem } from './ToolsPanel';
 import { localize, readAppLanguage, type AppLanguage } from './i18n';
 import { readAppSetting, saveAppSetting } from './settings';
+import { readWindhawkSettings, saveWindhawkSettings } from './windhawkSettings';
 import { getMediaProvider } from './mediaUtils';
 import AutoNoticeCard from './components/AutoNoticeCard';
-import BatteryDetail from './components/BatteryDetail';
 import Launcher from './components/Launcher';
 import MediaDetail from './components/MediaDetail';
+import SystemMonitorDetail from './components/SystemMonitorDetail';
 import { ACTIVITY_MODULE_DEFAULTS, type ActivityModule, type ActivityModuleSettings, type AutoNotice, type BatteryInfo, type SysData } from './types';
 import './App.css';
 
@@ -19,8 +21,14 @@ interface ClipboardHistoryItem {
   timestamp: number;
 }
 
-type IslandMode = 'idle' | 'launcher' | 'autoNotice' | 'mediaDetail' | 'batteryDetail' | 'tools';
+type IslandMode = 'idle' | 'launcher' | 'autoNotice' | 'mediaDetail' | 'systemMonitor' | 'tools';
 type IslandPosition = 0 | 1 | 2; // 0 = top center, 1 = left center, 2 = right center
+type IslandStyle = CSSProperties & {
+  '--island-pill-opacity': string;
+  '--island-custom-theme-bg'?: string;
+  '--island-custom-theme-border'?: string;
+  '--island-custom-theme-text'?: string;
+};
 
 function readLocalItems<T>(key: string): T[] {
   const stored = readAppSetting<unknown>(key, []);
@@ -67,14 +75,19 @@ export default function DynamicIsland() {
     scrollLock: false,
     microphoneMuted: false,
     outputMuted: false,
-    media: null
+    media: null,
+    cpuUsage: null,
+    memoryUsedBytes: null,
+    memoryTotalBytes: null
   });
 
   const [islandMode, setIslandMode] = useState<IslandMode>('idle');
   const [islandPosition, setIslandPosition] = useState<IslandPosition>(readIslandPosition);
+  const [windhawkSettings, setWindhawkSettings] = useState(readWindhawkSettings);
+  const [openSettingsRequest, setOpenSettingsRequest] = useState(0);
   const [viewport, setViewport] = useState(() => ({
-    width: window.innerWidth,
-    height: window.innerHeight
+    width: window.screen.width,
+    height: window.screen.height
   }));
   const [time, setTime] = useState(new Date());
   const [autoNotice, setAutoNotice] = useState<AutoNotice | null>(null);
@@ -82,12 +95,17 @@ export default function DynamicIsland() {
   const [shelfPaths, setShelfPaths] = useState<string[]>(() => readLocalItems<string>('di-file-shelf'));
   const [showLyrics, setShowLyrics] = useState(false);
   const [mediaArtwork, setMediaArtwork] = useState<string | null>(null);
+  const [mediaPinned, setMediaPinned] = useState(() => readLocalBoolean('di-pin-media', false));
+  const [monitorPinned, setMonitorPinned] = useState(() => (
+    readLocalBoolean('di-pin-monitor', readLocalBoolean('di-pin-battery', false))
+  ));
   const [activityModuleSettings, setActivityModuleSettings] = useState(readActivityModuleSettings);
   const [windowsNotificationNotices, setWindowsNotificationNotices] = useState(
     () => readLocalBoolean('di-windows-notification-notices', true)
   );
   const islandModeRef = useRef<IslandMode>('idle');
   const islandRef = useRef<HTMLDivElement | null>(null);
+  const scheduleBoundsReportRef = useRef<() => void>(() => {});
   const autoNoticeRef = useRef<AutoNotice | null>(null);
   const previousSystemDataRef = useRef<SysData | null>(null);
   const autoNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -113,7 +131,32 @@ export default function DynamicIsland() {
     return () => { active = false; };
   }, [sysData.media?.title, sysData.media?.artist, sysData.media?.source_app]);
 
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void listen('tray-open-settings', () => {
+      setIslandMode('tools');
+      setOpenSettingsRequest((request) => request + 1);
+    }).then((stopListening) => {
+      if (active) unlisten = stopListening;
+      else stopListening();
+    }).catch((error: unknown) => {
+      console.error('Gagal memasang listener pengaturan system tray:', error);
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
   useEffect(() => saveAppSetting('di-language', language), [language]);
+  useEffect(() => saveWindhawkSettings(windhawkSettings), [windhawkSettings]);
+  useEffect(() => saveAppSetting('di-pin-media', mediaPinned), [mediaPinned]);
+  useEffect(() => saveAppSetting('di-pin-monitor', monitorPinned), [monitorPinned]);
+
+  useEffect(() => {
+    scheduleBoundsReportRef.current();
+  }, [windhawkSettings.appearance.sizeScale, windhawkSettings.themes.textScale]);
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -121,44 +164,108 @@ export default function DynamicIsland() {
   }, []);
 
   useEffect(() => {
-    const updateViewport = () => setViewport({
-      width: window.innerWidth,
-      height: window.innerHeight
-    });
-    window.addEventListener('resize', updateViewport);
-    return () => window.removeEventListener('resize', updateViewport);
+    let active = true;
+    void currentMonitor()
+      .then((monitor) => {
+        if (!active || !monitor) return;
+        const size = monitor.size.toLogical(monitor.scaleFactor);
+        setViewport({ width: size.width, height: size.height });
+      })
+      .catch((error: unknown) => {
+        console.error('Gagal membaca ukuran monitor Dynamic Island:', error);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
     let active = true;
     let updating = false;
+    let pending = false;
     let lastBounds = '';
+    let frame: number | null = null;
     const reportBounds = async () => {
       const island = islandRef.current;
-      if (!active || !island || updating) return;
+      if (!active || !island) return;
+      if (updating) {
+        pending = true;
+        return;
+      }
 
-      const { x, y, width, height } = island.getBoundingClientRect();
-      const boundsKey = `${x},${y},${width},${height}`;
+      const bounds = island.getBoundingClientRect();
+      const nativeX = Math.floor(bounds.x);
+      const nativeY = Math.floor(bounds.y);
+      const nativeWidth = Math.ceil(bounds.right) - nativeX;
+      const nativeHeight = Math.ceil(bounds.bottom) - nativeY;
+      const style = window.getComputedStyle(island);
+      const parseRadius = (value: string) => {
+        const radius = Number.parseFloat(value);
+        return Number.isFinite(radius) ? radius : 0;
+      };
+      const zoom = parseRadius(style.zoom) || 1;
+      const radiusTopLeft = parseRadius(style.borderTopLeftRadius) * zoom;
+      const radiusTopRight = parseRadius(style.borderTopRightRadius) * zoom;
+      const radiusBottomRight = parseRadius(style.borderBottomRightRadius) * zoom;
+      const radiusBottomLeft = parseRadius(style.borderBottomLeftRadius) * zoom;
+      const boundsKey = `${nativeX},${nativeY},${nativeWidth},${nativeHeight},${radiusTopLeft},${radiusTopRight},${radiusBottomRight},${radiusBottomLeft}`;
       if (boundsKey === lastBounds) return;
 
       updating = true;
       try {
-        await invoke('update_island_bounds', { x, y, width, height });
+        await invoke('set_island_window_region', {
+          x: nativeX,
+          y: nativeY,
+          width: nativeWidth,
+          height: nativeHeight,
+          radiusTopLeft,
+          radiusTopRight,
+          radiusBottomRight,
+          radiusBottomLeft
+        });
         lastBounds = boundsKey;
       } catch (error) {
-        console.error('Gagal memperbarui area klik Dynamic Island:', error);
+        console.error('Gagal menempatkan jendela Dynamic Island:', error);
       } finally {
         updating = false;
+        if (active) {
+          if (pending) {
+            pending = false;
+            scheduleBoundsReport();
+          }
+        }
       }
     };
 
-    const timer = window.setInterval(() => { void reportBounds(); }, 30);
-    void reportBounds();
+    const scheduleBoundsReport = () => {
+      if (!active || frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        void reportBounds();
+      });
+    };
+    scheduleBoundsReportRef.current = scheduleBoundsReport;
+    const island = islandRef.current;
+    const resizeObserver = island && typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(scheduleBoundsReport)
+      : null;
+    if (island) resizeObserver?.observe(island);
+    window.addEventListener('resize', scheduleBoundsReport);
+    scheduleBoundsReport();
     return () => {
       active = false;
-      window.clearInterval(timer);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', scheduleBoundsReport);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      scheduleBoundsReportRef.current = () => {};
     };
-  }, []);
+  }, [islandPosition]);
+
+  useEffect(() => {
+    scheduleBoundsReportRef.current();
+    const timer = window.setTimeout(() => scheduleBoundsReportRef.current(), 350);
+    return () => window.clearTimeout(timer);
+  }, [islandMode, islandPosition]);
 
   useEffect(() => saveAppSetting('di-island-position', islandPosition), [islandPosition]);
 
@@ -346,6 +453,8 @@ export default function DynamicIsland() {
     if (islandModeRef.current !== 'launcher') return;
     if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
     autoNoticeTimer.current = null;
+    if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
+    closeDelayTimer.current = null;
     islandModeRef.current = 'tools';
     setIslandMode('tools');
   };
@@ -370,7 +479,7 @@ export default function DynamicIsland() {
   }, []);
 
   const openMediaDetail = () => {
-    if (!sysData.media || islandModeRef.current !== 'launcher') return;
+    if (!sysData.media || (islandModeRef.current !== 'launcher' && islandModeRef.current !== 'idle')) return;
     if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
     autoNoticeTimer.current = null;
     autoNoticeRef.current = null;
@@ -380,10 +489,10 @@ export default function DynamicIsland() {
     setIslandMode('mediaDetail');
   };
 
-  const openBatteryDetail = () => {
-    if (islandModeRef.current !== 'launcher') return;
-    islandModeRef.current = 'batteryDetail';
-    setIslandMode('batteryDetail');
+  const openSystemMonitor = () => {
+    if (islandModeRef.current !== 'launcher' && islandModeRef.current !== 'idle') return;
+    islandModeRef.current = 'systemMonitor';
+    setIslandMode('systemMonitor');
   };
 
   const clearAutoNotice = () => {
@@ -458,21 +567,30 @@ export default function DynamicIsland() {
     }
   };
 
-  const openSnippingTool = async () => {
+  const runCaptureAction = async (command: string, errorTitle: string) => {
     await closeIsland();
     try {
-      await invoke('open_snipping_tool');
+      await invoke(command);
     } catch (error) {
-      console.error('Gagal membuka Snipping Tool:', error);
+      console.error(`${errorTitle}:`, error);
       showAutoNotice({
         kind: 'system',
-        title: 'Gagal membuka Snipping Tool',
+        title: errorTitle,
         body: error instanceof Error ? error.message : String(error)
       });
     }
   };
 
+  const openSnippingTool = () => runCaptureAction('open_snipping_tool', 'Gagal membuka Snipping Tool');
+  const takeScreenshot = () => runCaptureAction('take_screenshot', 'Gagal mengambil screenshot');
+  const toggleScreenRecording = () => runCaptureAction('toggle_screen_recording', 'Gagal mengontrol perekaman layar');
+
   const formattedTime = time.toLocaleTimeString(language === 'id' ? 'id-ID' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+  const formattedDate = time.toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short'
+  });
   const batteryAvailable = sysData.battery !== null;
   const batteryLevel = Math.max(0, Math.min(sysData.battery ?? 0, 100));
   const batteryColor = !batteryAvailable
@@ -484,29 +602,6 @@ export default function DynamicIsland() {
       : batteryLevel <= 30
         ? '#fbbf24'
         : '#a3d977';
-  const batteryStatus = sysData.batteryState === 'Charging'
-    ? localize(language, 'Sedang mengisi daya', 'Charging')
-    : sysData.batteryState === 'Full'
-      ? localize(language, 'Baterai penuh', 'Battery full')
-      : sysData.batteryState === 'Discharging'
-        ? localize(language, 'Menggunakan daya baterai', 'On battery power')
-        : sysData.batteryError
-          ? localize(language, 'Gagal membaca status daya', 'Unable to read power status')
-          : localize(language, 'Status daya tidak diketahui', 'Power status unknown');
-  const batteryStateLabel = sysData.batteryState === 'Charging'
-    ? localize(language, 'Mengisi daya', 'Charging')
-    : sysData.batteryState === 'Full'
-      ? localize(language, 'Penuh', 'Full')
-      : sysData.batteryState === 'Discharging'
-        ? localize(language, 'Tidak terhubung', 'Not plugged in')
-        : localize(language, 'Tidak diketahui', 'Unknown');
-  const batteryHealthLabel = batteryLevel <= 15
-    ? localize(language, 'Segera isi daya', 'Charge soon')
-    : batteryLevel <= 30
-      ? localize(language, 'Daya baterai rendah', 'Low battery')
-      : batteryLevel >= 80
-        ? localize(language, 'Daya baterai cukup', 'Battery level is good')
-        : localize(language, 'Daya baterai normal', 'Battery level is normal');
   const mediaProvider = sysData.media ? getMediaProvider(sysData.media.source_app) : null;
   const noticeArtwork = autoNotice?.media
     && autoNotice.media.title === sysData.media?.title
@@ -518,11 +613,20 @@ export default function DynamicIsland() {
   const sideWidth = Math.max(0, Math.min(290, Math.max(220, viewport.width * 0.25), viewport.width - 24));
   const sideHeight = Math.max(0, Math.min(460, viewport.height - 24));
   const sideLauncherHeight = Math.min(360, sideHeight);
+  const hasPinnedIdleContent = mediaPinned || monitorPinned;
+  const idleWidth = isSidePosition
+    ? Math.min(sideWidth, hasPinnedIdleContent ? 260 : 76)
+    : Math.min(topPanelWidth, hasPinnedIdleContent
+      ? mediaPinned && monitorPinned ? 400 : mediaPinned ? 280 : 360
+      : 240);
+  const idleHeight = isSidePosition
+    ? monitorPinned ? mediaPinned ? Math.min(390, sideHeight) : Math.min(330, sideHeight) : mediaPinned ? 148 : 150
+    : monitorPinned ? 84 : mediaPinned ? 58 : 52;
 
   const islandVariants = {
     idle: {
-      height: islandPosition === 0 ? 38 : 92,
-      width: islandPosition === 0 ? 92 : 38,
+      height: idleHeight,
+      width: idleWidth,
       borderTopLeftRadius: islandPosition === 1 || islandPosition === 0 ? 0 : 12,
       borderTopRightRadius: islandPosition === 2 || islandPosition === 0 ? 0 : 12,
       borderBottomLeftRadius: islandPosition === 1 ? 0 : 12,
@@ -547,9 +651,9 @@ export default function DynamicIsland() {
         : (showLyrics ? 222 : 150),
       borderRadius: 18,
     },
-    batteryDetail: {
-      width: isSidePosition ? sideWidth : Math.min(280, topPanelWidth),
-      height: isSidePosition ? Math.min(280, sideHeight) : 170,
+    systemMonitor: {
+      width: isSidePosition ? sideWidth : Math.min(360, topPanelWidth),
+      height: isSidePosition ? Math.min(360, sideHeight) : 276,
       borderRadius: 18,
     },
     tools: {
@@ -563,26 +667,41 @@ export default function DynamicIsland() {
   const panelTransition = { duration: 0.32, ease: [0.22, 1, 0.36, 1] };
   const sideTravel = islandPosition === 1 ? -7 : islandPosition === 2 ? 7 : 0;
   const verticalTravel = islandPosition === 0 ? -6 : 0;
+  const pillOpacity = Number.isFinite(windhawkSettings.themes.pillOpacity)
+    ? Math.min(100, Math.max(35, windhawkSettings.themes.pillOpacity))
+    : 100;
+  const islandStyle: IslandStyle = {
+    zoom: Number(windhawkSettings.appearance.sizeScale) * windhawkSettings.themes.textScale / 100,
+    fontFamily: windhawkSettings.themes.fontFamily || undefined,
+    '--island-pill-opacity': String(pillOpacity / 100),
+    ...(windhawkSettings.themes.themePreset === 'custom' ? {
+      '--island-custom-theme-bg': windhawkSettings.themes.pillBgColor,
+      '--island-custom-theme-border': windhawkSettings.themes.contourBorderHex,
+      '--island-custom-theme-text': windhawkSettings.themes.textPrimaryColor
+    } : {})
+  };
 
   return (
     <div className={`w-screen h-screen flex ${
       islandPosition === 0 ? 'justify-center items-start' :
       islandPosition === 1 ? 'justify-start items-center' :
       'justify-end items-center'
-    } bg-transparent box-border select-none pointer-events-none`}>
+    } box-border select-none pointer-events-none`}>
       <motion.div
         ref={islandRef}
-        className={`island-shell bg-[#0a0a0a]/85 backdrop-blur-xl border border-white/10 text-zinc-100 overflow-hidden shadow-[0_15px_40px_rgba(0,0,0,0.8)] cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'}`}
+        className={`island-shell backdrop-blur-xl border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
+        style={islandStyle}
         variants={islandVariants}
         initial="idle"
         animate={islandMode}
         transition={springTransition}
+        onAnimationComplete={() => scheduleBoundsReportRef.current()}
         onPointerEnter={() => {
           if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
           closeDelayTimer.current = null;
         }}
         onPointerLeave={() => {
-          if (islandModeRef.current === 'idle') return;
+          if (islandModeRef.current === 'idle' || islandModeRef.current === 'tools' || islandModeRef.current === 'systemMonitor') return;
           if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
           closeDelayTimer.current = window.setTimeout(() => {
             closeDelayTimer.current = null;
@@ -610,7 +729,7 @@ export default function DynamicIsland() {
           {islandMode === 'idle' && (
             <motion.div
               key="idle"
-              className="island-idle flex items-center justify-between w-full h-full px-3 box-border"
+              className={`island-idle${isSidePosition ? ' island-idle--side' : ' island-idle--top'}${hasPinnedIdleContent ? ' island-idle--pinned' : ''}`}
               initial={{ opacity: 0, scale: 0.97, filter: 'blur(2px)' }}
               animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
               exit={{ opacity: 0, scale: 0.99, filter: 'blur(2px)' }}
@@ -622,8 +741,81 @@ export default function DynamicIsland() {
                 title={localize(language, 'Buka menu', 'Open menu')}
                 onClick={openLauncher}
               >
-                {formattedTime.replace('.', ':')}
+                <span className={`idle-clock__time${isSidePosition ? ' idle-clock__time--vertical' : ''}`}>
+                  {isSidePosition
+                    ? (
+                      <>
+                        <span>{String(time.getHours()).padStart(2, '0')}</span>
+                        <span>{String(time.getMinutes()).padStart(2, '0')}</span>
+                      </>
+                    )
+                    : formattedTime.replace('.', ':')}
+                </span>
+                <span className="idle-clock__date">{formattedDate}</span>
               </button>
+              {mediaPinned && (
+                <button
+                  type="button"
+                  className="idle-pin-card idle-pin-card--media"
+                  disabled={!sysData.media}
+                  aria-label={localize(language, 'Buka media yang disematkan', 'Open pinned media')}
+                  onClick={openMediaDetail}
+                >
+                  <span className={`idle-pin-card__icon${mediaArtwork ? ' idle-pin-card__icon--art' : ''}`}>
+                    {mediaArtwork ? <img src={mediaArtwork} alt="" /> : <Music2 size={16} />}
+                  </span>
+                  <span className="idle-pin-card__copy">
+                    <strong>{sysData.media?.title || localize(language, 'Tidak ada media', 'No media')}</strong>
+                    <small>{sysData.media?.artist || localize(language, 'Sematkan musik aktif', 'Play media to show it here')}</small>
+                  </span>
+                  {sysData.media?.is_playing && <span className="idle-pin-card__playing" aria-label={localize(language, 'Sedang diputar', 'Now playing')} />}
+                </button>
+              )}
+              {monitorPinned ? (
+                <button
+                  type="button"
+                  className="idle-monitor-card"
+                  aria-label={localize(language, 'Buka semua metrik monitor sistem', 'Open all system monitor metrics')}
+                  onClick={openSystemMonitor}
+                >
+                  <span className="idle-monitor-card__metric" title={localize(language, 'Penggunaan CPU', 'CPU usage')}>
+                    <Cpu size={13} />
+                    <strong>{sysData.cpuUsage === null ? '—' : `${Math.round(sysData.cpuUsage)}%`}</strong>
+                  </span>
+                  <span className="idle-monitor-card__metric" title={localize(language, 'Penggunaan memori', 'Memory usage')}>
+                    <HardDrive size={13} />
+                    <strong>{sysData.memoryUsedBytes !== null && sysData.memoryTotalBytes
+                      ? `${Math.round(sysData.memoryUsedBytes / sysData.memoryTotalBytes * 100)}%`
+                      : '—'}</strong>
+                  </span>
+                  <span className="idle-monitor-card__metric" title={localize(language, 'Baterai', 'Battery')}>
+                    {sysData.batteryState === 'Charging' ? <BatteryCharging size={13} /> : <Battery size={13} />}
+                    <strong>{batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}</strong>
+                  </span>
+                  <span
+                    className={`idle-monitor-card__metric${sysData.isWifiConnected ? ' is-connected' : ''}`}
+                    title={sysData.activeWifiName || localize(language, 'Jaringan Wi-Fi', 'Wi-Fi network')}
+                  >
+                    <Wifi size={13} />
+                    <strong>{sysData.isWifiConnected
+                      ? localize(language, 'Wi-Fi', 'Wi-Fi')
+                      : localize(language, 'Offline', 'Offline')}</strong>
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="idle-battery"
+                  aria-label={localize(language, 'Buka monitor sistem', 'Open system monitor')}
+                  onClick={openSystemMonitor}
+                  style={{ color: batteryColor }}
+                >
+                  <span className="idle-battery__icon">
+                    {sysData.batteryState === 'Charging' ? <BatteryCharging size={15} /> : <Battery size={15} />}
+                  </span>
+                  <span className="idle-battery__percent">{batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}</span>
+                </button>
+              )}
             </motion.div>
           )}
 
@@ -632,16 +824,12 @@ export default function DynamicIsland() {
               language={language}
               media={sysData.media}
               artwork={mediaArtwork}
-              batteryAvailable={batteryAvailable}
-              batteryLevel={batteryLevel}
-              batteryColor={batteryColor}
-              batteryCharging={sysData.batteryState === 'Charging'}
               travelX={sideTravel}
               travelY={verticalTravel}
               transition={panelTransition}
               onOpenTools={openTools}
               onOpenMedia={openMediaDetail}
-              onOpenBattery={openBatteryDetail}
+              onOpenSystemMonitor={openSystemMonitor}
               onLock={() => { void lockWindows(); }}
             />
           )}
@@ -653,59 +841,31 @@ export default function DynamicIsland() {
               artwork={mediaArtwork}
               language={language}
               showLyrics={showLyrics}
+              pinned={mediaPinned}
               travelX={sideTravel}
               travelY={verticalTravel}
               transition={panelTransition}
               onToggleLyrics={() => setShowLyrics((visible) => !visible)}
+              onTogglePin={() => setMediaPinned((pinned) => !pinned)}
               onReturnToLauncher={returnToLauncher}
               onMediaAction={(action) => { void handleMediaAction(action); }}
             />
           )}
 
-          <motion.div
-            key="tools-panel"
-            className="tools-panel-wrap"
-            style={{ display: islandMode === 'tools' ? 'block' : 'none' }}
-            initial={false}
-            animate={islandMode === 'tools'
-              ? { opacity: 1, x: 0, y: 0, scale: 1 }
-              : { opacity: 0, x: sideTravel, y: verticalTravel, scale: 0.995 }}
-            transition={panelTransition}
-          >
-              <ToolsPanel
-                language={language}
-                onLanguageChange={setLanguage}
-                clipboardItems={clipboardItems}
-                shelfPaths={shelfPaths}
-                activityModuleSettings={activityModuleSettings}
-                windowsNotificationNotices={windowsNotificationNotices}
-                onActivityModuleSettingsChange={setActivityModuleSettings}
-                onWindowsNotificationNoticesChange={setWindowsNotificationNotices}
-                onClose={() => { void closeIsland(); }}
-                onReturnToMenu={returnToLauncher}
-                onClearClipboard={() => setClipboardItems([])}
-                onRemoveShelfItem={(path) => setShelfPaths((items) => items.filter((item) => item !== path))}
-                onCopyClipboard={(text) => {
-                  void invoke('write_clipboard_text', { text }).catch((error) => console.error('Gagal menyalin teks:', error));
-                }}
-                onNotice={handleToolNotice}
-                onCapture={() => { void openSnippingTool(); }}
-                islandPosition={islandPosition}
-                onIslandPositionChange={setIslandPosition}
-              />
-          </motion.div>
-
-          {islandMode === 'batteryDetail' && (
-            <BatteryDetail
-              available={batteryAvailable}
-              level={batteryLevel}
-              color={batteryColor}
-              status={batteryStatus}
-              charging={sysData.batteryState === 'Charging'}
-              healthLabel={batteryHealthLabel}
-              stateLabel={batteryStateLabel}
-              error={sysData.batteryError}
+          {islandMode === 'systemMonitor' && (
+            <SystemMonitorDetail
               language={language}
+              cpuUsage={sysData.cpuUsage}
+              memoryUsedBytes={sysData.memoryUsedBytes}
+              memoryTotalBytes={sysData.memoryTotalBytes}
+              batteryAvailable={batteryAvailable}
+              batteryLevel={batteryLevel}
+              batteryColor={batteryColor}
+              batteryCharging={sysData.batteryState === 'Charging'}
+              pinned={monitorPinned}
+              onTogglePin={() => setMonitorPinned((pinned) => !pinned)}
+              isWifiConnected={sysData.isWifiConnected}
+              activeWifiName={sysData.activeWifiName}
               travelX={sideTravel}
               travelY={verticalTravel}
               transition={panelTransition}
@@ -714,6 +874,43 @@ export default function DynamicIsland() {
           )}
 
         </AnimatePresence>
+
+        <motion.div
+          className="tools-panel-wrap"
+          style={{ display: islandMode === 'tools' ? 'block' : 'none' }}
+          initial={false}
+          animate={islandMode === 'tools'
+            ? { opacity: 1, x: 0, y: 0, scale: 1 }
+            : { opacity: 0, x: sideTravel, y: verticalTravel, scale: 0.995 }}
+          transition={panelTransition}
+        >
+          <ToolsPanel
+            language={language}
+            onLanguageChange={setLanguage}
+            clipboardItems={clipboardItems}
+            shelfPaths={shelfPaths}
+            activityModuleSettings={activityModuleSettings}
+            windowsNotificationNotices={windowsNotificationNotices}
+            onActivityModuleSettingsChange={setActivityModuleSettings}
+            onWindowsNotificationNoticesChange={setWindowsNotificationNotices}
+            onClose={() => { void closeIsland(); }}
+            onReturnToMenu={returnToLauncher}
+            onClearClipboard={() => setClipboardItems([])}
+            onRemoveShelfItem={(path) => setShelfPaths((items) => items.filter((item) => item !== path))}
+            onCopyClipboard={(text) => {
+              void invoke('write_clipboard_text', { text }).catch((error) => console.error('Gagal menyalin teks:', error));
+            }}
+            onNotice={handleToolNotice}
+            onCapture={() => { void openSnippingTool(); }}
+            onScreenshot={() => { void takeScreenshot(); }}
+            onRecord={() => { void toggleScreenRecording(); }}
+            islandPosition={islandPosition}
+            onIslandPositionChange={setIslandPosition}
+            windhawkSettings={windhawkSettings}
+            onWindhawkSettingsChange={setWindhawkSettings}
+            openSettingsRequest={openSettingsRequest}
+          />
+        </motion.div>
       </motion.div>
     </div>
   );

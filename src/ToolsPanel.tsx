@@ -1,13 +1,15 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { openPath } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, File, KeyRound, ListTodo,
-  LocateFixed, Play, Plus, RotateCcw, Pause, Settings, X
+  LocateFixed, Pause, Play, Plus, RotateCcw, Scissors, Settings, Video, X
 } from 'lucide-react';
 import { localize, type AppLanguage } from './i18n';
 import { readAppSetting, saveAppSetting } from './settings';
+import type { WindhawkSettings } from './windhawkSettings';
 
 export interface ClipboardItem {
   text: string;
@@ -76,6 +78,12 @@ const ACTIVITY_MODULES: { id: ActivityModule; label: string }[] = [
   { id: 'battery', label: 'Baterai rendah dan penuh' }
 ];
 
+const WINDHAWK_THEMES = [
+  'obsidian', 'graphite', 'slate', 'nord', 'evergreen', 'espresso', 'plum', 'porcelain', 'custom'
+] as const;
+
+const ISLAND_SCALES = ['0.8', '1.0', '1.2', '1.5', '1.8', '2.0', '2.5'] as const;
+
 interface ToolsPanelProps {
   language: AppLanguage;
   onLanguageChange: (language: AppLanguage) => void;
@@ -92,8 +100,13 @@ interface ToolsPanelProps {
   onCopyClipboard: (text: string) => void;
   onNotice: (title: string, body: string) => void;
   onCapture: () => void;
+  onScreenshot: () => void;
+  onRecord: () => void;
   islandPosition: IslandPosition;
   onIslandPositionChange: (position: IslandPosition) => void;
+  windhawkSettings: WindhawkSettings;
+  onWindhawkSettingsChange: (settings: WindhawkSettings) => void;
+  openSettingsRequest: number;
 }
 
 type ToolTab = 'focus' | 'tasks' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
@@ -292,17 +305,24 @@ function WeekdayDatePicker({ label, value, onChange, language }: WeekdayDatePick
 export default function ToolsPanel({
   language, onLanguageChange, clipboardItems, shelfPaths, activityModuleSettings, windowsNotificationNotices,
   onActivityModuleSettingsChange, onWindowsNotificationNoticesChange, onClose, onReturnToMenu, onClearClipboard,
-  onRemoveShelfItem, onCopyClipboard, onNotice, onCapture,
-  islandPosition, onIslandPositionChange
+  onRemoveShelfItem, onCopyClipboard, onNotice, onCapture, onScreenshot, onRecord,
+  islandPosition, onIslandPositionChange, windhawkSettings, onWindhawkSettingsChange, openSettingsRequest
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolTab>('focus');
+  const [capturePaths, setCapturePaths] = useState<string[]>([]);
 
   const isVerticalLayout = islandPosition !== 0;
   const [expandedSettings, setExpandedSettings] = useState({
+    general: false,
     activity: false,
     notifications: false,
     clickUp: false
   });
+  useEffect(() => {
+    if (openSettingsRequest === 0) return;
+    setTab('settings');
+    setExpandedSettings((current) => ({ ...current, general: true }));
+  }, [openSettingsRequest]);
   const [remaining, setRemaining] = useState(() => readStored('di-focus-remaining', 25 * 60));
   const [focusMinutes, setFocusMinutes] = useState(() => readStored('di-focus-minutes', 25));
   const [breakMinutes, setBreakMinutes] = useState(() => readStored('di-break-minutes', 5));
@@ -339,6 +359,55 @@ export default function ToolsPanel({
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listen<string>('capture-saved', ({ payload }) => {
+      setCapturePaths((paths) => [payload, ...paths.filter((path) => path !== payload)]);
+    }).then((stopListening) => {
+      if (active) unlisten = stopListening;
+      else stopListening();
+    }).catch((error: unknown) => {
+      console.error('Gagal memasang listener tangkapan layar:', error);
+    });
+    void invoke<string[]>('list_capture_files')
+      .then((paths) => {
+        if (active) {
+          setCapturePaths((current) => [...new Set([...current, ...paths])]);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) console.error('Gagal memuat daftar tangkapan layar:', error);
+      });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+  const removeCapture = async (path: string) => {
+    if (!window.confirm(localize(language, 'Hapus file tangkapan layar ini?', 'Delete this capture file?'))) return;
+    try {
+      await invoke('delete_capture_file', { path });
+      setCapturePaths((paths) => paths.filter((item) => item !== path));
+    } catch (error) {
+      console.error('Gagal menghapus tangkapan layar:', error);
+      onNotice(
+        localize(language, 'Gagal menghapus tangkapan layar', 'Failed to delete capture'),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  };
+  const openCapture = async (path: string) => {
+    try {
+      await openPath(path);
+    } catch (error) {
+      console.error('Gagal membuka tangkapan layar:', error);
+      onNotice(
+        localize(language, 'Gagal membuka tangkapan layar', 'Failed to open capture'),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  };
   useEffect(() => {
     if (!running) return;
     const timer = window.setTimeout(() => {
@@ -806,11 +875,63 @@ export default function ToolsPanel({
           </div>
         )}
         {tab === 'capture' && (
-          <div className="tool-card">
-            <button type="button" className="tool-primary" onClick={onCapture}>
-              <Camera size={16} />
-              <span>{localize(language, 'Ambil tangkapan layar', 'Take a screenshot')}</span>
-            </button>
+          <div className="tool-card capture-card">
+            <div className="capture-actions">
+              <button type="button" className="capture-action" onClick={onScreenshot}>
+                <Camera size={18} />
+                <span>{localize(language, 'Screenshot', 'Screenshot')}</span>
+              </button>
+              <button type="button" className="capture-action" onClick={onCapture}>
+                <Scissors size={18} />
+                <span>{localize(language, 'Snip', 'Snip')}</span>
+              </button>
+              <button type="button" className="capture-action" onClick={onRecord}>
+                <Video size={18} className="capture-record-icon" />
+                <span>{localize(language, 'Rekam', 'Record')}</span>
+              </button>
+            </div>
+            <div className="capture-shortcuts" aria-label={localize(language, 'Slot pintasan tangkapan', 'Capture shortcut slots')}>
+              {capturePaths.map((path) => {
+                const fileName = path.split(/[\\/]/).pop() || path;
+                return (
+                  <div className="capture-shortcut capture-shortcut--file" key={path}>
+                    <button
+                      type="button"
+                      className="capture-shortcut-button capture-shortcut-button--file"
+                      onClick={() => { void openCapture(path); }}
+                      aria-label={localize(language, `Buka ${fileName}`, `Open ${fileName}`)}
+                      title={fileName}
+                    >
+                      <File size={20} />
+                    </button>
+                    <button
+                      type="button"
+                      className="capture-file-remove"
+                      onClick={() => { void removeCapture(path); }}
+                      aria-label={localize(language, `Hapus ${fileName}`, `Delete ${fileName}`)}
+                      title={localize(language, 'Hapus file', 'Delete file')}
+                    >
+                      <X size={12} />
+                    </button>
+                    <span className="capture-file-name">{fileName}</span>
+                  </div>
+                );
+              })}
+              {Array.from({ length: Math.max(0, 6 - capturePaths.length) }, (_, index) => (
+                <div className="capture-shortcut" key={index}>
+                  <button
+                    type="button"
+                    className="capture-shortcut-button"
+                    disabled
+                    aria-label={localize(language, `Slot ${index + 1} belum tersedia`, `Slot ${index + 1} unavailable`)}
+                    title={localize(language, 'Pintasan tambahan segera hadir', 'Additional shortcuts coming soon')}
+                  >
+                    <Plus size={22} />
+                  </button>
+                  <span>{localize(language, 'Tambah', 'Add')}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         {tab === 'settings' && (
@@ -829,41 +950,163 @@ export default function ToolsPanel({
             </header>
 
             <p className="settings-group-label">{localize(language, 'UMUM', 'GENERAL')}</p>
-            <section className="settings-section settings-language-section">
-              <label className="settings-language-field">
-                <span>{localize(language, 'Bahasa', 'Language')}</span>
-                <select value={language} onChange={(event) => onLanguageChange(event.target.value as AppLanguage)}>
-                  <option value="id">Bahasa Indonesia</option>
-                  <option value="en">English</option>
-                </select>
-              </label>
-            </section>
+            <section className="settings-section settings-section--general">
+              <button
+                className="settings-section-toggle"
+                type="button"
+                aria-expanded={expandedSettings.general}
+                aria-controls="settings-general-content"
+                onClick={() => setExpandedSettings((current) => ({ ...current, general: !current.general }))}
+              >
+                <span className="settings-section-icon"><Settings size={14} /></span>
+                <span className="settings-section-title">
+                  <strong>{localize(language, 'Umum', 'General')}</strong>
+                  <small>{localize(language, 'Atur tampilan dan posisi island.', 'Configure island appearance and position.')}</small>
+                </span>
+                <ChevronRight className="settings-section-chevron" size={15} />
+              </button>
+              {expandedSettings.general && (
+                <div className="settings-section-content" id="settings-general-content">
+                  <section className="settings-section settings-language-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Bahasa', 'Language')}</span>
+                      <select value={language} onChange={(event) => onLanguageChange(event.target.value as AppLanguage)}>
+                        <option value="id">Bahasa Indonesia</option>
+                        <option value="en">English</option>
+                      </select>
+                    </label>
+                  </section>
 
-            <section className="settings-section settings-position-section">
-              <label className="settings-section-title">
-                <strong>{localize(language, 'Posisi aplikasi', 'App position')}</strong>
-                <span className="settings-section-sub">{localize(language, 'Letak Dynamic Island di layar.', 'Position of Dynamic Island on screen.')}</span>
-              </label>
-              <div className="settings-position-options">
-                {([1, 0, 2] as const).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    className={`settings-position-btn ${islandPosition === value ? 'settings-position-btn-active' : ''}`}
-                    onClick={() => {
-                      const position: IslandPosition = value;
-                      onIslandPositionChange(position);
-                      void invoke('set_island_position', { position }).catch((error) => {
-                        console.warn('Tidak dapat mengubah posisi island:', error);
-                      });
-                    }}
-                    aria-pressed={islandPosition === value}
-                  >
-                    {value === 0 ? <LocateFixed size={14} /> : value === 1 ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}
-                    <span>{localize(language, value === 0 ? 'Atas' : value === 1 ? 'Kiri' : 'Kanan', value === 0 ? 'Top' : value === 1 ? 'Left' : 'Right')}</span>
-                  </button>
-                ))}
-              </div>
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-section-title">
+                      <strong>{localize(language, 'Posisi aplikasi', 'App position')}</strong>
+                      <span className="settings-section-sub">{localize(language, 'Letak Dynamic Island di layar.', 'Position of Dynamic Island on screen.')}</span>
+                    </label>
+                    <div className="settings-position-options">
+                      {([1, 0, 2] as const).map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={`settings-position-btn ${islandPosition === value ? 'settings-position-btn-active' : ''}`}
+                          onClick={() => {
+                            const position: IslandPosition = value;
+                            onIslandPositionChange(position);
+                          }}
+                          aria-pressed={islandPosition === value}
+                        >
+                          {value === 0 ? <LocateFixed size={14} /> : value === 1 ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}
+                          <span>{localize(language, value === 0 ? 'Atas' : value === 1 ? 'Kiri' : 'Kanan', value === 0 ? 'Top' : value === 1 ? 'Left' : 'Right')}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Gaya island', 'Island shape')}</span>
+                      <select
+                        value={windhawkSettings.appearance.shapeStyle}
+                        onChange={(event) => {
+                          const shapeStyle = event.target.value;
+                          if (shapeStyle !== 'default' && shapeStyle !== 'w11' && shapeStyle !== 'notch') return;
+                          onWindhawkSettingsChange({
+                            ...windhawkSettings,
+                            appearance: { ...windhawkSettings.appearance, shapeStyle }
+                          });
+                        }}
+                      >
+                        <option value="default">{localize(language, 'Pill (default)', 'Pill (default)')}</option>
+                        <option value="w11">{localize(language, 'Windows 11', 'Windows 11')}</option>
+                        <option value="notch">{localize(language, 'Notch macOS', 'macOS Notch')}</option>
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Tema', 'Theme')}</span>
+                      <select
+                        value={windhawkSettings.themes.themePreset}
+                        onChange={(event) => {
+                          const themePreset = WINDHAWK_THEMES.find((theme) => theme === event.target.value);
+                          if (!themePreset) return;
+                          onWindhawkSettingsChange({
+                            ...windhawkSettings,
+                            themes: { ...windhawkSettings.themes, themePreset }
+                          });
+                        }}
+                      >
+                        <option value="obsidian">Obsidian</option>
+                        <option value="graphite">Graphite</option>
+                        <option value="slate">Slate</option>
+                        <option value="nord">Nord</option>
+                        <option value="evergreen">Evergreen</option>
+                        <option value="espresso">Espresso</option>
+                        <option value="plum">Plum</option>
+                        <option value="porcelain">Porcelain</option>
+                        <option value="custom">{localize(language, 'Kustom', 'Custom')}</option>
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Skala island', 'Island scale')}</span>
+                      <select
+                        value={windhawkSettings.appearance.sizeScale}
+                        onChange={(event) => {
+                          const sizeScale = ISLAND_SCALES.find((scale) => scale === event.target.value);
+                          if (!sizeScale) return;
+                          onWindhawkSettingsChange({
+                            ...windhawkSettings,
+                            appearance: { ...windhawkSettings.appearance, sizeScale }
+                          });
+                        }}
+                      >
+                        {ISLAND_SCALES.map((scale) => <option key={scale} value={scale}>{scale}x</option>)}
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Ukuran teks', 'Text size')}</span>
+                      <input
+                        className="settings-range"
+                        type="range"
+                        min={70}
+                        max={160}
+                        step={1}
+                        value={windhawkSettings.themes.textScale}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          themes: { ...windhawkSettings.themes, textScale: Number(event.target.value) }
+                        })}
+                      />
+                      <small className="settings-range-value">{windhawkSettings.themes.textScale}%</small>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Opasitas latar', 'Background opacity')}</span>
+                      <input
+                        className="settings-range"
+                        type="range"
+                        min={35}
+                        max={100}
+                        step={1}
+                        value={Math.min(100, Math.max(35, windhawkSettings.themes.pillOpacity))}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          themes: { ...windhawkSettings.themes, pillOpacity: Number(event.target.value) }
+                        })}
+                      />
+                      <small className="settings-range-value">{Math.min(100, Math.max(35, windhawkSettings.themes.pillOpacity))}%</small>
+                    </label>
+                  </section>
+                </div>
+              )}
             </section>
 
             <p className="settings-group-label">{localize(language, 'NOTIFIKASI', 'NOTIFICATIONS')}</p>

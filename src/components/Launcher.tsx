@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Battery, BatteryCharging, LayoutGrid, LockKeyhole, Music2 } from 'lucide-react';
+import { Gauge, LayoutGrid, LockKeyhole, Music2 } from 'lucide-react';
 import { localize, type AppLanguage } from '../i18n';
 import type { MediaInfo } from '../types';
 
@@ -7,22 +7,17 @@ interface LauncherProps {
   language: AppLanguage;
   media: MediaInfo | null;
   artwork: string | null;
-  batteryAvailable: boolean;
-  batteryLevel: number;
-  batteryColor: string;
-  batteryCharging: boolean;
   travelX: number;
   travelY: number;
   transition: { duration: number; ease: number[] };
   onOpenTools: () => void;
   onOpenMedia: () => void;
-  onOpenBattery: () => void;
+  onOpenSystemMonitor: () => void;
   onLock: () => void;
 }
 
 export default function Launcher({
-  language, media, artwork, batteryAvailable, batteryLevel, batteryColor, batteryCharging,
-  travelX, travelY, transition, onOpenTools, onOpenMedia, onOpenBattery, onLock
+  language, media, artwork, travelX, travelY, transition, onOpenTools, onOpenMedia, onOpenSystemMonitor, onLock
 }: LauncherProps) {
   return (
     <motion.nav
@@ -48,11 +43,9 @@ export default function Launcher({
         </span>
         {media?.is_playing && <i className="launcher-item__playing" aria-label={localize(language, 'Sedang diputar', 'Now playing')} />}
       </button>
-      <button className="launcher-item launcher-item--battery" onClick={onOpenBattery} aria-label={localize(language, 'Baterai', 'Battery')}>
-        <span className="launcher-item__icon launcher-item__icon--battery" style={{ color: batteryColor }}>
-          {batteryCharging ? <BatteryCharging size={17} /> : <Battery size={17} />}
-        </span>
-        <span className="launcher-item__copy"><strong>{batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}</strong></span>
+      <button className="launcher-item" onClick={onOpenSystemMonitor} aria-label={localize(language, 'Monitor sistem', 'System monitor')}>
+        <span className="launcher-item__icon"><Gauge size={17} /></span>
+        <span className="launcher-item__copy"><strong>{localize(language, 'Monitor', 'Monitor')}</strong></span>
       </button>
       <button className="launcher-item" onClick={onLock} aria-label={localize(language, 'Kunci Windows', 'Lock Windows')} title={localize(language, 'Kunci Windows', 'Lock Windows')}>
         <span className="launcher-item__icon"><LockKeyhole size={17} /></span>
