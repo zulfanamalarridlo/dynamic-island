@@ -12,6 +12,7 @@ export const WINDHAWK_SETTINGS_DEFAULTS = {
     petStyle: 'luffy',
     petIdleMinutes: 10,
     edgeOffset: 0,
+    autoHideFullscreen: true,
     panelWidth: 368,
     panelHeight: 332
   },
@@ -34,6 +35,7 @@ export type WindhawkSettings = {
     petStyle: PetStyle;
     petIdleMinutes: number;
     edgeOffset: number;
+    autoHideFullscreen: boolean;
     panelWidth: number;
     panelHeight: number;
   };

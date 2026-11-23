@@ -9,6 +9,7 @@ use std::io::Write;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -28,7 +29,7 @@ use windows::UI::Notifications::Management::{
     UserNotificationListener, UserNotificationListenerAccessStatus,
 };
 use windows::UI::Notifications::{KnownNotificationBindings, NotificationKinds};
-use windows::Win32::Foundation::{FILETIME, GlobalFree, HANDLE, HGLOBAL, HWND};
+use windows::Win32::Foundation::{FILETIME, GlobalFree, HANDLE, HGLOBAL, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BitBlt, CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC,
     DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC, SRCCOPY,
@@ -58,10 +59,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_MENU, VK_NUMLOCK, VK_R, VK_S, VK_SCROLL, VK_SHIFT, VK_V, VK_X,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_STYLE, GetSystemMetrics, GetWindowLongW, HWND_TOPMOST, SM_CXVIRTUALSCREEN,
-    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongW, SetWindowPos,
-    WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+    GWL_STYLE, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongW,
+    GetWindowRect, HWND_TOPMOST, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongW, SetWindowPos, WS_CAPTION,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
 };
 use windows::core::ComInterface;
 mod models;
@@ -72,6 +74,7 @@ static APP_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 static APP_SETTINGS_CACHE: Mutex<Option<AppSettings>> = Mutex::new(None);
 static PENDING_SNIP_CAPTURE: Mutex<Option<(Instant, u32)>> = Mutex::new(None);
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static AUTO_HIDE_FULLSCREEN: AtomicBool = AtomicBool::new(true);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CLICKUP_API_BASE: &str = "https://api.clickup.com/api/v2";
 
@@ -2136,6 +2139,133 @@ fn read_memory_usage() -> Result<(u64, u64), String> {
     ))
 }
 
+#[tauri::command]
+fn set_auto_hide_fullscreen(enabled: bool) {
+    AUTO_HIDE_FULLSCREEN.store(enabled, Ordering::Relaxed);
+}
+
+fn is_other_window_fullscreen(own_hwnd: HWND) -> bool {
+    let fg = unsafe { GetForegroundWindow() };
+    if fg.0 == 0 || fg == own_hwnd {
+        return false;
+    }
+
+    let mut class_buf = [0u16; 128];
+    let len = unsafe { GetClassNameW(fg, &mut class_buf) };
+    if len > 0 {
+        let class_name = String::from_utf16_lossy(&class_buf[..len as usize]);
+        if matches!(
+            class_name.as_str(),
+            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+        ) {
+            return false;
+        }
+    }
+
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(fg, &mut rect) }.is_err() {
+        return false;
+    }
+    let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    if screen_w <= 0 || screen_h <= 0 {
+        return false;
+    }
+    rect.left <= 0 && rect.top <= 0 && rect.right >= screen_w && rect.bottom >= screen_h
+}
+
+fn strip_partial_download_ext(file_name: &str) -> Option<String> {
+    const EXTENSIONS: [&str; 5] = [".crdownload", ".part", ".opdownload", ".download", ".tmp"];
+    let lower = file_name.to_ascii_lowercase();
+    for ext in EXTENSIONS {
+        if lower.ends_with(ext) && file_name.len() > ext.len() {
+            return Some(file_name[..file_name.len() - ext.len()].to_string());
+        }
+    }
+    None
+}
+
+fn scan_active_download() -> Option<ActiveDownloadInfo> {
+    let user_profile = std::env::var_os("USERPROFILE")?;
+    let downloads_dir = PathBuf::from(user_profile).join("Downloads");
+    let entries = fs::read_dir(downloads_dir).ok()?;
+    let now = SystemTime::now();
+    let mut best: Option<(SystemTime, ActiveDownloadInfo)> = None;
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        let Some(clean_name) = strip_partial_download_ext(&file_name) else {
+            continue;
+        };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        let Ok(age) = now.duration_since(modified) else {
+            continue;
+        };
+        if age > Duration::from_secs(20) {
+            continue;
+        }
+        let info = ActiveDownloadInfo {
+            file_name: clean_name,
+            size_bytes: metadata.len(),
+        };
+        if best.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
+            best = Some((modified, info));
+        }
+    }
+
+    best.map(|(_, info)| info)
+}
+
+fn parse_bluetooth_battery_output(stdout: &str) -> Option<BluetoothDeviceInfo> {
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        let Some((name, battery_str)) = trimmed.split_once('|') else {
+            continue;
+        };
+        let clean_name = name.trim();
+        let Ok(battery) = battery_str.trim().parse::<u8>() else {
+            continue;
+        };
+        if !clean_name.is_empty() && battery <= 100 {
+            return Some(BluetoothDeviceInfo {
+                name: clean_name.to_string(),
+                battery,
+            });
+        }
+    }
+    None
+}
+
+fn query_bluetooth_battery() -> Option<BluetoothDeviceInfo> {
+    let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$devs = Get-PnpDevice -Class Bluetooth -Status OK
+foreach ($d in $devs) {
+  $prop = Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName '{104EA319-6EE2-4701-BD47-8DDBF425BBE5} 2'
+  if ($prop -and $null -ne $prop.Data) {
+    Write-Output "$($d.FriendlyName)|$($prop.Data)"
+    break
+  }
+}
+"#;
+    let output = command_no_window("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_bluetooth_battery_output(&String::from_utf8_lossy(&output.stdout))
+}
+
 fn read_pc_idle_seconds() -> u64 {
     let mut info = LASTINPUTINFO {
         cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
@@ -2232,6 +2362,9 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
         let mut cached_network = get_network_info();
         let mut cached_camera_app: Option<String> = None;
         let mut cached_mic_app: Option<String> = None;
+        let mut cached_download: Option<ActiveDownloadInfo> = None;
+        let mut cached_bluetooth: Option<BluetoothDeviceInfo> = None;
+        let mut hidden_by_fullscreen = false;
         let mut tick: u64 = 0;
 
         loop {
@@ -2365,6 +2498,39 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 cached_mic_app = current_mic_app;
             }
 
+            if let Some(main_window) = app_handle.get_webview_window("main") {
+                if let Ok(raw_hwnd) = main_window.hwnd() {
+                    let own_hwnd = HWND(raw_hwnd.0 as isize);
+                    let should_auto_hide = AUTO_HIDE_FULLSCREEN.load(Ordering::Relaxed);
+                    let other_fullscreen = should_auto_hide && is_other_window_fullscreen(own_hwnd);
+                    if other_fullscreen {
+                        if !hidden_by_fullscreen && main_window.is_visible().unwrap_or(false) {
+                            let _ = main_window.hide();
+                            hidden_by_fullscreen = true;
+                        }
+                    } else if hidden_by_fullscreen {
+                        let _ = main_window.show();
+                        hidden_by_fullscreen = false;
+                    }
+                }
+            }
+
+            if tick % 2 == 0 {
+                let current_download = scan_active_download();
+                if let (Some(prev), None) = (cached_download.as_ref(), current_download.as_ref()) {
+                    emit_system_notice(
+                        &app_handle,
+                        "Download complete",
+                        &prev.file_name,
+                    );
+                }
+                cached_download = current_download;
+            }
+
+            if tick % 15 == 0 {
+                cached_bluetooth = query_bluetooth_battery();
+            }
+
             let payload = SysData {
                 battery: battery.percentage,
                 battery_state: battery.state,
@@ -2386,6 +2552,8 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 mic_in_use: cached_mic_app.is_some(),
                 mic_app: cached_mic_app.clone(),
                 pc_idle_seconds: read_pc_idle_seconds(),
+                active_download: cached_download.clone(),
+                bluetooth_device: cached_bluetooth.clone(),
             };
 
             if last_payload.as_ref() != Some(&payload) {
@@ -2588,8 +2756,21 @@ fn initialize_app_settings(app: &tauri::AppHandle) -> Result<(), String> {
 mod tests {
     use super::{
         calculate_cpu_usage, calculate_island_window_rect, encode_bmp_from_bgra,
-        parse_active_capability_app, parse_legacy_clickup_settings, wrap_dib_as_bmp,
+        parse_active_capability_app, parse_bluetooth_battery_output, parse_legacy_clickup_settings,
+        strip_partial_download_ext, wrap_dib_as_bmp,
     };
+
+    #[test]
+    fn parses_bluetooth_battery_and_partial_download_names() {
+        let bt = parse_bluetooth_battery_output("AirPods Pro|85\n").expect("should parse bt");
+        assert_eq!(bt.name, "AirPods Pro");
+        assert_eq!(bt.battery, 85);
+        assert_eq!(
+            strip_partial_download_ext("installer.exe.crdownload").as_deref(),
+            Some("installer.exe")
+        );
+        assert_eq!(strip_partial_download_ext("notes.pdf"), None);
+    }
 
     #[test]
     fn detects_active_webcam_or_mic_app_from_reg_output() {
@@ -2835,6 +3016,7 @@ fn main() {
             scan_wifi,
             connect_wifi,
             set_island_window_bounds,
+            set_auto_hide_fullscreen,
             lock_windows,
             open_snipping_tool,
             take_screenshot,

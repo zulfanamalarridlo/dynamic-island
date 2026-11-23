@@ -19,6 +19,16 @@ export interface AutoNotice {
   previousVolumeLevel?: number;
 }
 
+export interface ActiveDownloadInfo {
+  fileName: string;
+  sizeBytes: number;
+}
+
+export interface BluetoothDeviceInfo {
+  name: string;
+  battery: number;
+}
+
 export interface SysData {
   battery: number | null;
   batteryState: string;
@@ -40,6 +50,8 @@ export interface SysData {
   micInUse?: boolean;
   micApp?: string | null;
   pcIdleSeconds?: number;
+  activeDownload?: ActiveDownloadInfo | null;
+  bluetoothDevice?: BluetoothDeviceInfo | null;
 }
 
 export interface BatteryInfo {

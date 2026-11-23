@@ -170,6 +170,20 @@ pub(crate) struct ClipboardHistoryItem {
 
 #[derive(Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ActiveDownloadInfo {
+    pub(crate) file_name: String,
+    pub(crate) size_bytes: u64,
+}
+
+#[derive(Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BluetoothDeviceInfo {
+    pub(crate) name: String,
+    pub(crate) battery: u8,
+}
+
+#[derive(Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SysData {
     pub(crate) battery: Option<f32>,
     pub(crate) battery_state: String,
@@ -191,6 +205,8 @@ pub(crate) struct SysData {
     pub(crate) mic_in_use: bool,
     pub(crate) mic_app: Option<String>,
     pub(crate) pc_idle_seconds: u64,
+    pub(crate) active_download: Option<ActiveDownloadInfo>,
+    pub(crate) bluetooth_device: Option<BluetoothDeviceInfo>,
 }
 
 #[derive(Serialize, Clone, PartialEq)]

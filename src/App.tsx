@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimatePresence, domAnimation, LazyMotion, m } from 'framer-motion';
-import { Battery, BatteryCharging, Camera, Cpu, HardDrive, Mic, Music2, Wifi } from 'lucide-react';
+import { Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, Mic, Music2, Wifi } from 'lucide-react';
 import ToolsPanel, { type ClipboardItem } from './components/ToolsPanel';
 import { localize, readAppLanguage, type AppLanguage } from './lib/i18n';
 import { readAppSetting, saveAppSetting } from './lib/storage';
@@ -112,7 +112,9 @@ export default function DynamicIsland() {
     cameraApp: null,
     micInUse: false,
     micApp: null,
-    pcIdleSeconds: 0
+    pcIdleSeconds: 0,
+    activeDownload: null,
+    bluetoothDevice: null
   });
 
   const [islandMode, setIslandMode] = useState<IslandMode>('idle');
@@ -593,11 +595,12 @@ export default function DynamicIsland() {
   const hasPet = windhawkSettings.appearance.petStyle !== 'none';
   const hasPrivacyAlert = Boolean(sysData.cameraActive || sysData.micInUse);
   const privacyExtraWidth = hasPrivacyAlert ? (sysData.cameraActive && sysData.micInUse ? 34 : 20) : 0;
+  const liveExtraWidth = (sysData.activeDownload ? 56 : 0) + (sysData.bluetoothDevice ? 46 : 0);
   const idleWidth = isSidePosition
     ? Math.min(sideWidth, hasPinnedIdleContent ? 216 : 60)
     : Math.min(topPanelWidth, (hasPinnedIdleContent
       ? mediaPinned && monitorPinned ? 388 : mediaPinned ? 276 : 332
-      : hasPet ? 228 : 204) + privacyExtraWidth);
+      : hasPet ? 228 : 204) + privacyExtraWidth + liveExtraWidth);
   const idleHeight = isSidePosition
     ? monitorPinned ? mediaPinned ? Math.min(236, sideHeight) : Math.min(186, sideHeight) : mediaPinned ? 116 : 118
     : monitorPinned ? 46 : mediaPinned ? 44 : 38;
@@ -656,6 +659,14 @@ export default function DynamicIsland() {
   const activeVariant = islandVariants[islandMode];
   const targetWindowWidth = Math.max(1, Math.ceil(activeVariant.width * effectiveScale));
   const targetWindowHeight = Math.max(1, Math.ceil(activeVariant.height * effectiveScale));
+
+  useEffect(() => {
+    void invoke('set_auto_hide_fullscreen', {
+      enabled: windhawkSettings.appearance.autoHideFullscreen
+    }).catch((error: unknown) => {
+      console.error('Gagal mengatur auto-hide fullscreen:', error);
+    });
+  }, [windhawkSettings.appearance.autoHideFullscreen]);
 
   useEffect(() => {
     void invoke('set_island_window_bounds', {
@@ -765,6 +776,24 @@ export default function DynamicIsland() {
                       <Mic size={11} />
                     </span>
                   )}
+                </span>
+              )}
+              {sysData.activeDownload && (
+                <span
+                  className="idle-live-pill idle-live-pill--download"
+                  title={`${localize(language, 'Mengunduh', 'Downloading')}: ${sysData.activeDownload.fileName}`}
+                >
+                  <Download size={10} />
+                  <span>{(sysData.activeDownload.sizeBytes / (1024 * 1024)).toFixed(1)}M</span>
+                </span>
+              )}
+              {sysData.bluetoothDevice && (
+                <span
+                  className="idle-live-pill idle-live-pill--bt"
+                  title={`${sysData.bluetoothDevice.name} (${sysData.bluetoothDevice.battery}%)`}
+                >
+                  <Bluetooth size={10} />
+                  <span>{sysData.bluetoothDevice.battery}%</span>
                 </span>
               )}
               <button

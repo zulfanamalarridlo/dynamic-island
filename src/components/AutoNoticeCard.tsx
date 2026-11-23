@@ -1,6 +1,6 @@
 import { m } from 'framer-motion';
 import {
-  Activity, BatteryCharging, Bell, Camera, Clipboard, ClipboardPaste, Copy, Keyboard, Mic, Music2, Plug,
+  Activity, BatteryCharging, Bell, Bluetooth, Camera, Clipboard, ClipboardPaste, Copy, Download, Keyboard, Mic, Music2, Plug,
   PlugZap, Scissors, Sun, Volume2, VolumeX, Wifi, WifiOff, X
 } from 'lucide-react';
 import { localize, type AppLanguage } from '../lib/i18n';
@@ -34,6 +34,8 @@ function getNoticeLabel(notice: AutoNotice, language: AppLanguage) {
   const content = `${notice.title} ${notice.body}`.toLowerCase();
   if (notice.kind === 'media') return localize(language, 'Sedang diputar', 'Now Playing');
   if (notice.kind === 'notification') return localize(language, 'Notifikasi', 'Notification');
+  if (content.includes('download')) return localize(language, 'Unduhan', 'Download');
+  if (content.includes('bluetooth')) return 'Bluetooth';
   if (content.includes('camera') || content.includes('kamera')) return localize(language, 'Privasi', 'Privacy');
   if (content.includes('accessing your microphone') || content.includes('microphone active')) return localize(language, 'Privasi', 'Privacy');
   if (content.includes('wi-fi') || content.includes('wifi')) return localize(language, 'Konektivitas', 'Connectivity');
@@ -77,6 +79,8 @@ function getNoticeIcon(notice: AutoNotice) {
   const content = `${notice.title} ${notice.body}`.toLowerCase();
   if (notice.kind === 'media') return <Music2 size={18} />;
   if (notice.kind === 'notification') return <Bell size={18} />;
+  if (content.includes('download')) return <Download size={18} />;
+  if (content.includes('bluetooth')) return <Bluetooth size={18} />;
   if (content.includes('camera') || content.includes('kamera')) return <Camera size={18} />;
   if (content.includes('accessing your microphone') || content.includes('microphone active')) return <Mic size={18} />;
   if (content.includes('wi-fi') || content.includes('wifi')) return content.includes('disconnected') ? <WifiOff size={18} /> : <Wifi size={18} />;

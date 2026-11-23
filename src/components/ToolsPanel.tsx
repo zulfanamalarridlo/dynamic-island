@@ -1098,6 +1098,24 @@ export default function ToolsPanel({
                   </section>
 
                   <section className="settings-section settings-position-section">
+                    <label className="settings-inline-row">
+                      <span className="settings-section-title">
+                        <strong>{localize(language, 'Sembunyi saat fullscreen', 'Auto-hide in fullscreen')}</strong>
+                        <small>{localize(language, 'Otomatis sembunyi saat game/video penuh', 'Hide during fullscreen games & videos')}</small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={windhawkSettings.appearance.autoHideFullscreen}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, autoHideFullscreen: event.target.checked }
+                        })}
+                      />
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
                     <label className="settings-language-field">
                       <span>{localize(language, 'Gaya & bentuk', 'Shape & style')}</span>
                       <select
