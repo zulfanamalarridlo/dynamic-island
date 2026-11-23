@@ -1,0 +1,994 @@
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { openPath } from '@tauri-apps/plugin-opener';
+import { invoke } from '@tauri-apps/api/core';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+  Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, File, KeyRound, ListTodo,
+  LocateFixed, Play, Plus, RotateCcw, Pause, Settings, X
+} from 'lucide-react';
+import { localize, type AppLanguage } from './i18n';
+import { readAppSetting, saveAppSetting } from './settings';
+
+export interface ClipboardItem {
+  text: string;
+  timestamp: number;
+}
+
+interface ClickUpTask {
+  id: string;
+  name: string;
+  status?: { status: string } | null;
+  due_date?: string | null;
+}
+
+interface ClickUpConfig {
+  api_key_configured: boolean;
+  list_ids: string[];
+  settings_path: string;
+}
+
+interface ClickUpTaskDateRange {
+  dueDateGt: number;
+}
+
+interface PrayerLocation {
+  latitude: number;
+  longitude: number;
+}
+
+type PrayerTime = [string, string];
+
+interface AladhanResponse {
+  code: number;
+  data?: {
+    timings?: Record<string, string>;
+  };
+}
+
+type ActivityModule =
+  | 'capsLock'
+  | 'numLock'
+  | 'scrollLock'
+  | 'microphone'
+  | 'speaker'
+  | 'volume'
+  | 'clipboard'
+  | 'brightness'
+  | 'wifi'
+  | 'power'
+  | 'battery';
+
+type IslandPosition = 0 | 1 | 2; // 0 = top center, 1 = left center, 2 = right center
+
+type ActivityModuleSettings = Record<ActivityModule, boolean>;
+
+const ACTIVITY_MODULES: { id: ActivityModule; label: string }[] = [
+  { id: 'capsLock', label: 'Caps Lock' },
+  { id: 'numLock', label: 'Num Lock' },
+  { id: 'scrollLock', label: 'Scroll Lock' },
+  { id: 'microphone', label: 'Mikrofon' },
+  { id: 'speaker', label: 'Speaker' },
+  { id: 'volume', label: 'Volume' },
+  { id: 'clipboard', label: 'Copy, cut, paste, dan clipboard' },
+  { id: 'brightness', label: 'Tombol kecerahan' },
+  { id: 'wifi', label: 'Wi-Fi' },
+  { id: 'power', label: 'Charger' },
+  { id: 'battery', label: 'Baterai rendah dan penuh' }
+];
+
+interface ToolsPanelProps {
+  language: AppLanguage;
+  onLanguageChange: (language: AppLanguage) => void;
+  clipboardItems: ClipboardItem[];
+  shelfPaths: string[];
+  activityModuleSettings: ActivityModuleSettings;
+  windowsNotificationNotices: boolean;
+  onActivityModuleSettingsChange: (settings: ActivityModuleSettings) => void;
+  onWindowsNotificationNoticesChange: (enabled: boolean) => void;
+  onClose: () => void;
+  onReturnToMenu: () => void;
+  onClearClipboard: () => void;
+  onRemoveShelfItem: (path: string) => void;
+  onCopyClipboard: (text: string) => void;
+  onNotice: (title: string, body: string) => void;
+  onCapture: () => void;
+  islandPosition: IslandPosition;
+  onIslandPositionChange: (position: IslandPosition) => void;
+}
+
+type ToolTab = 'focus' | 'tasks' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
+
+const TABS: { id: ToolTab; label: string }[] = [
+  { id: 'focus', label: 'Focus' },
+  { id: 'tasks', label: 'To-do' },
+  { id: 'clipboard', label: 'Clipboard' },
+  { id: 'shelf', label: 'Shelf' },
+  { id: 'prayer', label: 'Prayer' },
+  { id: 'capture', label: 'Capture' },
+  { id: 'settings', label: 'Settings' }
+];
+
+function getActivityModuleLabel(id: ActivityModule, label: string, language: AppLanguage) {
+  const englishLabels: Record<ActivityModule, string> = {
+    capsLock: 'Caps Lock',
+    numLock: 'Num Lock',
+    scrollLock: 'Scroll Lock',
+    microphone: 'Microphone',
+    speaker: 'Speaker',
+    volume: 'Volume',
+    clipboard: 'Copy, cut, paste, and clipboard',
+    brightness: 'Brightness keys',
+    wifi: 'Wi-Fi',
+    power: 'Charger',
+    battery: 'Low and full battery'
+  };
+  const indonesianLabels: Record<ActivityModule, string> = {
+    capsLock: 'Caps Lock',
+    numLock: 'Num Lock',
+    scrollLock: 'Scroll Lock',
+    microphone: 'Mikrofon',
+    speaker: 'Speaker',
+    volume: 'Volume',
+    clipboard: 'Salin, potong, tempel, dan clipboard',
+    brightness: 'Tombol kecerahan',
+    wifi: 'Wi-Fi',
+    power: 'Charger',
+    battery: 'Baterai rendah dan penuh'
+  };
+  return language === 'id' ? (id === 'clipboard' ? indonesianLabels[id] : label) : englishLabels[id];
+}
+
+function localizeMessage(language: AppLanguage, message: string) {
+  if (language === 'id' || !message) return message;
+  const translations: Record<string, string> = {
+    'Atur API key ClickUp di settings.json': 'Set the ClickUp API key in settings.json',
+    'Atur List ID ClickUp di settings.json': 'Set the ClickUp List IDs in settings.json',
+    'Menyimpan konfigurasi…': 'Saving configuration…',
+    'Pengaturan tersimpan. Perubahan ClickUp langsung digunakan.': 'Settings saved. ClickUp changes are applied immediately.',
+    'Lokasi tidak didukung perangkat': 'Location is not supported on this device',
+    'Lokasi belum diambil': 'Location has not been acquired',
+    'Mencari lokasi…': 'Finding your location…',
+    'Lokasi saat ini': 'Current location',
+    'Izin lokasi ditolak': 'Location permission denied',
+    'Lokasi tidak merespons': 'Location request timed out',
+    'Lokasi tidak tersedia': 'Location unavailable',
+    'Memuat jadwal…': 'Loading schedule…',
+    'Jadwal salat tidak tersedia': 'Prayer schedule is unavailable',
+    'Gagal memuat jadwal salat': 'Failed to load prayer schedule',
+    'Pilih List ID yang tersedia dan periksa konfigurasi ClickUp di settings.json': 'Select an available List ID and check the ClickUp configuration in settings.json',
+    'Memuat task dari ClickUp…': 'Loading tasks from ClickUp…',
+    'Konfigurasi ClickUp tidak tersedia. Periksa API key dan List ID di settings.json': 'ClickUp configuration is unavailable. Check the API key and List IDs in settings.json',
+    'Isi nama task terlebih dahulu': 'Enter a task name first',
+    'Pilih tanggal yang valid dan pastikan tanggal akhir tidak sebelum tanggal awal': 'Choose valid dates and make sure the end date is not before the start date',
+    'Rentang tanggal maksimal 366 hari': 'The maximum date range is 366 days',
+    'Tidak ada task yang dibuat karena tanggal yang dipilih hanya mencakup akhir pekan': 'No tasks were created because the selected dates only include weekends'
+  };
+  if (translations[message]) return translations[message];
+  const loaded = message.match(/^(\d+) task dimuat$/);
+  if (loaded) return `${loaded[1]} ${loaded[1] === '1' ? 'task' : 'tasks'} loaded`;
+  const creating = message.match(/^Membuat (\d+) task hari kerja dan time entry di ClickUp…$/);
+  if (creating) return `Creating ${creating[1]} weekday tasks and time entries in ClickUp…`;
+  const prayerFailure = message.match(/^Gagal memuat jadwal: (.+)$/);
+  if (prayerFailure) return `Failed to load schedule: ${prayerFailure[1]}`;
+  const prayerTimeUnavailable = message.match(/^Waktu (.+) tidak tersedia$/);
+  if (prayerTimeUnavailable) return `${prayerTimeUnavailable[1]} time is unavailable`;
+  return message;
+}
+
+function readStored<T>(key: string, fallback: T): T {
+  return readAppSetting(key, fallback);
+}
+
+function formatTime(seconds: number) {
+  return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+}
+
+function formatApiDate(date: Date) {
+  return `${date.getDate().toString().padStart(2, '0')}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getFullYear()}`;
+}
+
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function dateInputToUtcTimestamp(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const timestamp = Date.UTC(Number(year), Number(month) - 1, Number(day));
+  const date = new Date(timestamp);
+  if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) {
+    return null;
+  }
+  return timestamp;
+}
+
+function formatWeekdayDate(date: Date) {
+  const weekday = date.getDay();
+  if (weekday === 6) date.setDate(date.getDate() + 2);
+  if (weekday === 0) date.setDate(date.getDate() + 1);
+  return formatDateInput(date);
+}
+
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+interface WeekdayDatePickerProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}
+
+function WeekdayDatePicker({ label, value, onChange, language }: WeekdayDatePickerProps & { language: AppLanguage }) {
+  const [open, setOpen] = useState(false);
+  const selectedDate = value ? parseLocalDate(value) : new Date();
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
+  const firstDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1).getDay();
+  const daysInMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
+  const cells = Array.from({ length: firstDay + daysInMonth }, (_, index) => {
+    if (index < firstDay) return null;
+    return index - firstDay + 1;
+  });
+
+  return (
+    <div className="weekday-date-picker">
+      <span className="weekday-date-label">{label}</span>
+      <button
+        type="button"
+        className="weekday-date-trigger"
+        aria-expanded={open}
+        onClick={() => {
+          if (!open && value) setVisibleMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
+          setOpen((current) => !current);
+        }}
+      >
+        <CalendarDays size={13} />
+        <span>{selectedDate.toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+      </button>
+      {open && (
+        <div className="weekday-calendar" role="dialog" aria-label={localize(language, `Pilih ${label.toLowerCase()}`, `Choose ${label.toLowerCase()}`)}>
+          <div className="weekday-calendar-header">
+            <button type="button" aria-label={localize(language, 'Bulan sebelumnya', 'Previous month')} onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))}><ChevronLeft size={14} /></button>
+            <strong>{visibleMonth.toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US', { month: 'long', year: 'numeric' })}</strong>
+            <button type="button" aria-label={localize(language, 'Bulan berikutnya', 'Next month')} onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))}><ChevronRight size={14} /></button>
+          </div>
+          <div className="weekday-calendar-grid">
+            {(language === 'id' ? ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']).map((day) => <span className="weekday-calendar-day-name" key={day}>{day}</span>)}
+            {cells.map((day, index) => {
+              if (!day) return <span className="weekday-calendar-empty" key={`empty-${index}`} />;
+              const date = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day);
+              const weekend = date.getDay() === 0 || date.getDay() === 6;
+              const dateValue = formatDateInput(date);
+              const isSelected = dateValue === value;
+              return (
+                <button
+                  type="button"
+                  key={dateValue}
+                  disabled={weekend}
+                  aria-pressed={isSelected}
+                  className={isSelected ? 'weekday-calendar-date is-selected' : 'weekday-calendar-date'}
+                  onClick={() => {
+                    onChange(dateValue);
+                    setOpen(false);
+                  }}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+          <p>{localize(language, 'Sabtu dan Minggu tidak tersedia', 'Saturdays and Sundays are unavailable')}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function ToolsPanel({
+  language, onLanguageChange, clipboardItems, shelfPaths, activityModuleSettings, windowsNotificationNotices,
+  onActivityModuleSettingsChange, onWindowsNotificationNoticesChange, onClose, onReturnToMenu, onClearClipboard,
+  onRemoveShelfItem, onCopyClipboard, onNotice, onCapture,
+  islandPosition, onIslandPositionChange
+}: ToolsPanelProps) {
+  const [tab, setTab] = useState<ToolTab>('focus');
+
+  const isVerticalLayout = islandPosition !== 0;
+  const [expandedSettings, setExpandedSettings] = useState({
+    activity: false,
+    notifications: false,
+    clickUp: false
+  });
+  const [remaining, setRemaining] = useState(() => readStored('di-focus-remaining', 25 * 60));
+  const [focusMinutes, setFocusMinutes] = useState(() => readStored('di-focus-minutes', 25));
+  const [breakMinutes, setBreakMinutes] = useState(() => readStored('di-break-minutes', 5));
+  const [running, setRunning] = useState(false);
+  const [isBreak, setIsBreak] = useState(false);
+  const [sessions, setSessions] = useState(() => readStored('di-focus-sessions', 0));
+  const [clickUpConfig, setClickUpConfig] = useState<ClickUpConfig | null>(null);
+  const [clickUpApiKeyDraft, setClickUpApiKeyDraft] = useState('');
+  const [clickUpListIdsDraft, setClickUpListIdsDraft] = useState('');
+  const [clickUpSettingsBusy, setClickUpSettingsBusy] = useState(false);
+  const [clickUpSettingsStatus, setClickUpSettingsStatus] = useState('');
+  const [clickUpListId, setClickUpListId] = useState('');
+  const [clickUpTasks, setClickUpTasks] = useState<ClickUpTask[]>([]);
+  const [clickUpTaskDateRange, setClickUpTaskDateRange] = useState<ClickUpTaskDateRange | null>(null);
+  const [clickUpTaskInput, setClickUpTaskInput] = useState('');
+  const [showClickUpCreate, setShowClickUpCreate] = useState(false);
+  const [clickUpDateMode, setClickUpDateMode] = useState<'single' | 'range'>('single');
+  const [clickUpDueDate, setClickUpDueDate] = useState(() => formatWeekdayDate(new Date()));
+  const [clickUpRangeStart, setClickUpRangeStart] = useState(() => formatWeekdayDate(new Date()));
+  const [clickUpRangeEnd, setClickUpRangeEnd] = useState(() => formatWeekdayDate(new Date()));
+  const [clickUpPage, setClickUpPage] = useState(0);
+  const [clickUpHasMore, setClickUpHasMore] = useState(false);
+  const [clickUpBusy, setClickUpBusy] = useState(false);
+  const [clickUpStatus, setClickUpStatus] = useState('');
+  const [prayerReminders, setPrayerReminders] = useState(() => readStored('di-prayer-reminders', false));
+  const [now, setNow] = useState(Date.now());
+  const [location, setLocation] = useState<PrayerLocation | null>(null);
+  const [locationStatus, setLocationStatus] = useState('Lokasi belum diambil');
+  const [prayerTimes, setPrayerTimes] = useState<PrayerTime[]>([]);
+  const [prayerStatus, setPrayerStatus] = useState('');
+  const [prayerRefresh, setPrayerRefresh] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setTimeout(() => {
+      if (remaining > 1) {
+        setRemaining(remaining - 1);
+        return;
+      }
+      setRunning(false);
+      setIsBreak(!isBreak);
+      setRemaining((isBreak ? focusMinutes : breakMinutes) * 60);
+      if (!isBreak) setSessions((count) => count + 1);
+      onNotice(
+        isBreak
+          ? localize(language, 'Waktu istirahat selesai', 'Break complete')
+          : localize(language, 'Sesi fokus selesai', 'Focus session complete'),
+        isBreak
+          ? localize(language, 'Waktunya kembali fokus.', 'Time to get back to focus.')
+          : localize(language, 'Waktunya beristirahat sejenak.', 'Time to take a short break.')
+      );
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [running, remaining, isBreak, focusMinutes, breakMinutes, onNotice, language]);
+
+  useEffect(() => saveAppSetting('di-focus-remaining', remaining), [remaining]);
+  useEffect(() => saveAppSetting('di-focus-minutes', focusMinutes), [focusMinutes]);
+  useEffect(() => saveAppSetting('di-break-minutes', breakMinutes), [breakMinutes]);
+  useEffect(() => saveAppSetting('di-focus-sessions', sessions), [sessions]);
+  useEffect(() => saveAppSetting('di-prayer-reminders', prayerReminders), [prayerReminders]);
+  useEffect(() => {
+    let active = true;
+    void invoke<ClickUpConfig>('get_clickup_config')
+      .then((config) => {
+        if (!active) return;
+        setClickUpConfig(config);
+        setClickUpListIdsDraft(config.list_ids.join(', '));
+        const stored = readStored<unknown>('di-clickup-list-id', '');
+        const savedListId = typeof stored === 'string' || typeof stored === 'number' ? String(stored) : '';
+        const listId = config.list_ids.includes(savedListId) ? savedListId : (config.list_ids[0] ?? '');
+        setClickUpListId(listId);
+        if (!config.api_key_configured) setClickUpStatus('Atur API key ClickUp di settings.json');
+        else if (!config.list_ids.length) setClickUpStatus('Atur List ID ClickUp di settings.json');
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setClickUpStatus(error instanceof Error ? error.message : String(error));
+      });
+    return () => { active = false; };
+  }, []);
+
+  const saveClickUpSettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setClickUpSettingsBusy(true);
+    setClickUpSettingsStatus('Menyimpan konfigurasi…');
+    try {
+      const config = await invoke<ClickUpConfig>('save_clickup_config', {
+        apiKey: clickUpApiKeyDraft,
+        listIds: clickUpListIdsDraft
+      });
+      setClickUpConfig(config);
+      setClickUpApiKeyDraft('');
+      setClickUpListIdsDraft(config.list_ids.join(', '));
+      setClickUpStatus('');
+      setClickUpSettingsStatus('Pengaturan tersimpan. Perubahan ClickUp langsung digunakan.');
+      if (!config.list_ids.includes(clickUpListId)) {
+        const nextListId = config.list_ids[0] ?? '';
+        setClickUpListId(nextListId);
+        saveAppSetting('di-clickup-list-id', nextListId);
+        setClickUpTasks([]);
+      }
+    } catch (error) {
+      setClickUpSettingsStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClickUpSettingsBusy(false);
+    }
+  };
+
+  const requestLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('Lokasi tidak didukung perangkat');
+      setLocation(null);
+      return;
+    }
+
+    setLocation(null);
+    setPrayerTimes([]);
+    setPrayerStatus('');
+    setLocationStatus('Mencari lokasi…');
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setLocation({ latitude: coords.latitude, longitude: coords.longitude });
+        setLocationStatus('Lokasi saat ini');
+      },
+      (error) => {
+        setLocation(null);
+        setLocationStatus(error.code === error.PERMISSION_DENIED
+          ? 'Izin lokasi ditolak'
+          : error.code === error.TIMEOUT
+            ? 'Lokasi tidak merespons'
+            : 'Lokasi tidak tersedia');
+      },
+      { enableHighAccuracy: false, maximumAge: 300_000, timeout: 12_000 }
+    );
+  };
+
+  useEffect(() => {
+    if (tab === 'prayer') requestLocation();
+  }, [tab]);
+
+  const prayerDate = formatApiDate(new Date(now));
+  useEffect(() => {
+    if (!location) return;
+
+    const controller = new AbortController();
+    const loadPrayerTimes = async () => {
+      setPrayerStatus('Memuat jadwal…');
+      const params = new URLSearchParams({
+        latitude: location.latitude.toString(),
+        longitude: location.longitude.toString(),
+        method: '20'
+      });
+
+      try {
+        const response = await fetch(`https://api.aladhan.com/v1/timings/${prayerDate}?${params}`, {
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`API merespons ${response.status}`);
+        const result = await response.json() as AladhanResponse;
+        if (result.code !== 200 || !result.data?.timings) throw new Error('Jadwal salat tidak tersedia');
+
+        const entries: [string, string][] = [
+          ['Subuh', result.data.timings.Fajr],
+          ['Dzuhur', result.data.timings.Dhuhr],
+          ['Ashar', result.data.timings.Asr],
+          ['Maghrib', result.data.timings.Maghrib],
+          ['Isya', result.data.timings.Isha]
+        ].map(([name, value]) => {
+          const time = value?.match(/^(\d{1,2}:\d{2})/)?.[1];
+          if (!time) throw new Error(`Waktu ${name} tidak tersedia`);
+          return [name, time];
+        });
+
+        setPrayerTimes(entries);
+        setPrayerStatus('');
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setPrayerStatus(error instanceof Error ? `Gagal memuat jadwal: ${error.message}` : 'Gagal memuat jadwal salat');
+      }
+    };
+
+    void loadPrayerTimes();
+    return () => controller.abort();
+  }, [location, prayerDate, prayerRefresh]);
+
+  const currentTime = new Date(now).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const nextPrayer = prayerTimes.find(([, value]) => value > currentTime) ?? prayerTimes[0];
+  useEffect(() => {
+    if (!prayerReminders || !prayerTimes.length) return;
+    const date = new Date(now);
+    const prayer = prayerTimes.find(([, value]) => value === currentTime);
+    if (!prayer) return;
+    const dateKey = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+    const key = `${dateKey}:${prayer[0]}`;
+    if (readAppSetting('di-last-prayer-notice', '') === key) return;
+    saveAppSetting('di-last-prayer-notice', key);
+    onNotice(`Waktu ${prayer[0]}`, 'Waktunya menunaikan salat.');
+  }, [now, currentTime, prayerTimes, prayerReminders, onNotice]);
+  const loadClickUpTasks = async (
+    append = false,
+    requestedListId = clickUpListId,
+    requestedDateRange = clickUpTaskDateRange,
+    showResult = true
+  ) => {
+    const listId = String(requestedListId ?? '').trim();
+    if (!clickUpConfig?.api_key_configured || !clickUpConfig.list_ids.includes(listId)) {
+      setClickUpStatus('Pilih List ID yang tersedia dan periksa konfigurasi ClickUp di settings.json');
+      return;
+    }
+
+    const page = append ? clickUpPage + 1 : 0;
+    setClickUpBusy(true);
+    setClickUpStatus('Memuat task dari ClickUp…');
+    try {
+      const tasks = await invoke<ClickUpTask[]>('get_clickup_tasks', {
+        listId,
+        page,
+        dueDateGt: requestedDateRange?.dueDateGt ?? null
+      });
+      setClickUpTasks((current) => append ? [...current, ...tasks] : tasks);
+      setClickUpPage(page);
+      setClickUpHasMore(tasks.length === 100);
+      setClickUpStatus(showResult ? `${append ? clickUpTasks.length + tasks.length : tasks.length} task dimuat` : '');
+    } catch (error) {
+      setClickUpStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClickUpBusy(false);
+    }
+  };
+
+  const createClickUpTask = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = clickUpTaskInput.trim();
+    const listId = String(clickUpListId ?? '').trim();
+    if (!clickUpConfig?.api_key_configured || !clickUpConfig.list_ids.includes(listId)) {
+      setClickUpStatus('Konfigurasi ClickUp tidak tersedia. Periksa API key dan List ID di settings.json');
+      return;
+    }
+    if (!name) {
+      setClickUpStatus('Isi nama task terlebih dahulu');
+      return;
+    }
+
+    const startDate = dateInputToUtcTimestamp(clickUpDateMode === 'single' ? clickUpDueDate : clickUpRangeStart);
+    const endDate = dateInputToUtcTimestamp(clickUpDateMode === 'single' ? clickUpDueDate : clickUpRangeEnd);
+    if (startDate === null || endDate === null || endDate < startDate) {
+      setClickUpStatus('Pilih tanggal yang valid dan pastikan tanggal akhir tidak sebelum tanggal awal');
+      return;
+    }
+
+    const calendarDays = Math.floor((endDate - startDate) / 86_400_000) + 1;
+    if (calendarDays > 366) {
+      setClickUpStatus('Rentang tanggal maksimal 366 hari');
+      return;
+    }
+
+    const dueDates: number[] = [];
+    for (let date = startDate; date <= endDate; date += 86_400_000) {
+      const dayOfWeek = new Date(date).getUTCDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        continue;
+      } else {
+        dueDates.push(date);
+      }
+    }
+    if (dueDates.length === 0) {
+      setClickUpStatus('Tidak ada task yang dibuat karena tanggal yang dipilih hanya mencakup akhir pekan');
+      return;
+    }
+    const firstDate = new Date(dueDates[0]);
+    const taskDateRange = {
+      dueDateGt: Date.UTC(firstDate.getUTCFullYear(), firstDate.getUTCMonth(), 1) - 1
+    };
+    setClickUpBusy(true);
+    setClickUpStatus(`Membuat ${dueDates.length} task hari kerja dan time entry di ClickUp…`);
+    try {
+      await invoke<ClickUpTask[]>('create_clickup_tasks', {
+        listId,
+        name,
+        dueDates
+      });
+      setClickUpTaskInput('');
+      setClickUpTaskDateRange(taskDateRange);
+      setShowClickUpCreate(false);
+      await loadClickUpTasks(false, listId, taskDateRange, false);
+    } catch (error) {
+      setClickUpStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClickUpBusy(false);
+    }
+  };
+
+  const resetFocus = () => {
+    setRunning(false);
+    setRemaining((isBreak ? breakMinutes : focusMinutes) * 60);
+  };
+
+  const tabsIcon: Record<ToolTab, ReactNode> = {
+    focus: <AlarmClock size={15} />, tasks: <ListTodo size={15} />, clipboard: <Clipboard size={15} />,
+    shelf: <File size={15} />, prayer: <span>☾</span>, capture: <Camera size={15} />, settings: <Settings size={15} />
+  };
+
+  return (
+    <section className={`tools-panel${isVerticalLayout ? ' tools-panel--side' : ''}`} aria-label={localize(language, 'Alat Dynamic Island', 'Dynamic Island tools')}>
+      <header className="tools-header">
+        <button className="tools-back" aria-label={localize(language, 'Kembali ke menu', 'Back to menu')} onClick={onReturnToMenu}><ArrowLeft size={15} /></button>
+        <button className="tools-close" aria-label={localize(language, 'Tutup menu', 'Close menu')} onClick={onClose}><X size={15} /></button>
+      </header>
+      <nav className="tools-tabs" aria-label={localize(language, 'Alat', 'Tools')}>
+        {TABS.map((item) => (
+          <button
+            key={item.id}
+            aria-label={item.id === 'settings' ? localize(language, 'Pengaturan', 'Settings') : item.id === 'focus' ? localize(language, 'Fokus', 'Focus') : item.id === 'tasks' ? 'To-do' : item.id === 'clipboard' ? 'Clipboard' : item.id === 'shelf' ? 'Shelf' : item.id === 'prayer' ? localize(language, 'Salat', 'Prayer') : localize(language, 'Tangkapan layar', 'Capture')}
+            aria-current={tab === item.id ? 'page' : undefined}
+            className={tab === item.id ? 'tools-tab is-active' : 'tools-tab'}
+            onClick={() => setTab(item.id)}
+          >
+            <span className="tools-tab__icon">{tabsIcon[item.id]}</span>
+          </button>
+        ))}
+      </nav>
+      <div className="tools-content">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={tab}
+            className="tools-tab-panel"
+            initial={{ opacity: 0, y: 5, filter: 'blur(2px)' }}
+            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, y: -3, filter: 'blur(1px)' }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          >
+        {tab === 'focus' && (
+          <div className="tool-card focus-card">
+            <span className="focus-status">{isBreak ? localize(language, 'Istirahat', 'Break') : localize(language, 'Fokus', 'Focus')}{sessions > 0 ? ` · ${sessions} ${localize(language, 'selesai', 'completed')}` : ''}</span>
+            <strong className="focus-countdown">{formatTime(remaining)}</strong>
+            <div className="focus-actions">
+              <button className="tool-primary" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={15} /> : <Play size={15} />}{running ? localize(language, 'Jeda', 'Pause') : localize(language, 'Mulai', 'Start')}</button>
+              <button className="tool-icon-button" aria-label={localize(language, 'Atur ulang timer', 'Reset timer')} onClick={resetFocus}><RotateCcw size={15} /></button>
+            </div>
+            <div className="focus-settings">
+              <label>{localize(language, 'Fokus', 'Focus')} <input type="number" min="1" max="180" value={focusMinutes} disabled={running} onChange={(event) => {
+                const value = Math.max(1, Math.min(180, Number(event.target.value) || 1));
+                setFocusMinutes(value);
+                if (!isBreak) setRemaining(value * 60);
+              }} /> min</label>
+              <label>{localize(language, 'Istirahat', 'Break')} <input type="number" min="1" max="60" value={breakMinutes} disabled={running} onChange={(event) => {
+                const value = Math.max(1, Math.min(60, Number(event.target.value) || 1));
+                setBreakMinutes(value);
+                if (isBreak) setRemaining(value * 60);
+              }} /> min</label>
+            </div>
+          </div>
+        )}
+        {tab === 'tasks' && (
+          <div className="tool-card">
+            {clickUpConfig === null ? (
+              <p className="tool-empty">{clickUpStatus ? localizeMessage(language, clickUpStatus) : localize(language, 'Memeriksa konfigurasi ClickUp…', 'Checking ClickUp configuration…')}</p>
+            ) : !clickUpConfig.api_key_configured || clickUpConfig.list_ids.length === 0 ? (
+              <div className="clickup-settings-help">
+                <strong>{localize(language, 'Konfigurasi ClickUp belum lengkap', 'ClickUp configuration is incomplete')}</strong>
+                <span>{localize(language, 'Tambahkan API key dan List ID di pengaturan aplikasi.', 'Add the API key and List IDs in app settings.')}</span>
+                {clickUpStatus && <p className="clickup-status" role="status">{localizeMessage(language, clickUpStatus)}</p>}
+              </div>
+            ) : (
+              <>
+                <div className="clickup-task-toolbar">
+                  <label className="clickup-list-select">
+                    <span>{localize(language, 'Daftar', 'List')}</span>
+                    <select value={clickUpListId} onChange={(event) => {
+                    const listId = event.target.value;
+                    setClickUpListId(listId);
+                    saveAppSetting('di-clickup-list-id', listId);
+                    setClickUpTasks([]);
+                    setClickUpPage(0);
+                    setClickUpHasMore(false);
+                    setClickUpTaskDateRange(null);
+                    }}>
+                    {clickUpConfig.list_ids.map((id) => <option value={id} key={id}>{localize(language, 'Daftar', 'List')} {id}</option>)}
+                    </select>
+                  </label>
+                  <button className="tool-primary" type="button" disabled={clickUpBusy || !clickUpListId} onClick={() => { void loadClickUpTasks(false); }}>
+                    {clickUpBusy ? localize(language, 'Memuat…', 'Loading…') : localize(language, 'Muat task', 'Load tasks')}
+                  </button>
+                  <button className="clickup-create-button" type="button" onClick={() => {
+                    setClickUpStatus('');
+                    setShowClickUpCreate(true);
+                  }}>
+                    <Plus size={14} /> {localize(language, 'Buat task', 'Create task')}
+                  </button>
+                </div>
+                {showClickUpCreate ? (
+                  <form className="clickup-create-form" onSubmit={(event) => { void createClickUpTask(event); }}>
+                    <div className="clickup-create-heading">
+                    <div><strong>{localize(language, 'Task baru', 'New task')}</strong><span>{localize(language, 'Task dibuat untuk hari kerja yang dipilih.', 'Tasks are created for the selected weekdays.')}</span></div>
+                    <button type="button" className="tools-close" aria-label={localize(language, 'Tutup form', 'Close form')} onClick={() => setShowClickUpCreate(false)}><X size={14} /></button>
+                    </div>
+                    <label className="clickup-task-name">
+                    <span>{localize(language, 'Nama task', 'Task name')}</span>
+                    <input value={clickUpTaskInput} onChange={(event) => setClickUpTaskInput(event.target.value)} maxLength={500} placeholder={localize(language, 'Contoh: Follow up project', 'Example: Follow up project')} required />
+                    </label>
+                    <div className="clickup-date-mode">
+                    <button type="button" className={clickUpDateMode === 'single' ? 'is-active' : ''} onClick={() => setClickUpDateMode('single')}>{localize(language, 'Satu hari', 'Single day')}</button>
+                    <button type="button" className={clickUpDateMode === 'range' ? 'is-active' : ''} onClick={() => setClickUpDateMode('range')}>{localize(language, 'Rentang tanggal', 'Date range')}</button>
+                    </div>
+                    {clickUpDateMode === 'single' ? (
+                    <WeekdayDatePicker label={localize(language, 'Tanggal task', 'Task date')} value={clickUpDueDate} onChange={setClickUpDueDate} language={language} />
+                    ) : (
+                    <div className="clickup-date-range">
+                      <WeekdayDatePicker label={localize(language, 'Mulai', 'From')} value={clickUpRangeStart} onChange={setClickUpRangeStart} language={language} />
+                      <WeekdayDatePicker label={localize(language, 'Sampai', 'To')} value={clickUpRangeEnd} onChange={setClickUpRangeEnd} language={language} />
+                    </div>
+                    )}
+                    {clickUpStatus && <p className="clickup-status" role="status">{localizeMessage(language, clickUpStatus)}</p>}
+                    <div className="clickup-create-actions">
+                    <button type="button" className="tool-text-button" disabled={clickUpBusy} onClick={() => setShowClickUpCreate(false)}>{localize(language, 'Batal', 'Cancel')}</button>
+                    <button className="tool-primary" type="submit" disabled={clickUpBusy}>
+                      {clickUpBusy ? localize(language, 'Memproses…', 'Processing…') : localize(language, 'Buat task', 'Create task')}
+                    </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    {clickUpStatus && <p className="clickup-status" role="status">{localizeMessage(language, clickUpStatus)}</p>}
+                    <div className="clickup-task-table-wrap">
+                    <table className="clickup-task-table">
+                      <thead><tr><th>{localize(language, 'Nama', 'Name')}</th><th>{localize(language, 'Status', 'Status')}</th><th>{localize(language, 'Batas waktu', 'Due date')}</th></tr></thead>
+                      <tbody>
+                        {clickUpTasks.map((task) => (
+                          <tr key={task.id}>
+                            <td>{task.name}</td>
+                            <td><span className="clickup-task-status">{task.status?.status ?? localize(language, 'Tanpa status', 'No status')}</span></td>
+                            <td>{task.due_date ? new Date(Number(task.due_date)).toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US') : '—'}</td>
+                          </tr>
+                        ))}
+                        {!clickUpTasks.length && <tr><td className="clickup-table-empty" colSpan={3}>{localize(language, 'Pilih daftar, lalu muat task.', 'Select a list, then load tasks.')}</td></tr>}
+                      </tbody>
+                    </table>
+                    </div>
+                    {clickUpHasMore && <button className="tool-text-button" type="button" disabled={clickUpBusy} onClick={() => { void loadClickUpTasks(true); }}>{localize(language, 'Muat lebih', 'Load more')}</button>}
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {tab === 'clipboard' && (
+          <div className="tool-card">
+            <div className="tool-card-heading"><span className="tool-count">{clipboardItems.length} {localize(language, 'item', 'items')}</span><button className="tool-text-button" onClick={onClearClipboard}>{localize(language, 'Hapus semua', 'Clear all')}</button></div>
+            <div className="history-list">
+              {clipboardItems.length === 0 && <p className="tool-empty">{localize(language, 'Belum ada teks yang disalin.', 'No copied text yet.')}</p>}
+              {clipboardItems.map((item, index) => (
+                <button className="history-row" key={`${item.timestamp}-${index}`} title={localize(language, 'Klik untuk menyalin', 'Click to copy')} onClick={() => onCopyClipboard(item.text)}>
+                  <span>{item.text}</span><small>{new Date(item.timestamp).toLocaleTimeString(language === 'id' ? 'id-ID' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {tab === 'shelf' && (
+          <div className="tool-card">
+            <div className="shelf-drop">{localize(language, 'Lepaskan file di sini untuk menyimpannya sementara.', 'Drop files here to keep them temporarily.')}</div>
+            <div className="shelf-list">
+              {shelfPaths.length === 0 && <p className="tool-empty">{localize(language, 'Belum ada file di shelf.', 'No files on the shelf yet.')}</p>}
+              {shelfPaths.map((path) => (
+                <div className="shelf-row" key={path}>
+                  <button className="shelf-open" onClick={() => void openPath(path)}><File size={14} /><span>{path.split(/[\\/]/).pop() || path}</span></button>
+                  <button className="task-delete" aria-label={localize(language, 'Hapus dari shelf', 'Remove from shelf')} onClick={() => onRemoveShelfItem(path)}><X size={14} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {tab === 'prayer' && (
+          <div className="tool-card">
+            <div className="tool-card-heading">
+              <span className="tool-count">{localizeMessage(language, locationStatus)}</span>
+              {nextPrayer && <span className="prayer-next">{nextPrayer[0]} · {nextPrayer[1]}</span>}
+              {(locationStatus !== 'Lokasi saat ini' || (prayerStatus && prayerStatus !== 'Memuat jadwal…')) && (
+                <button
+                  className="prayer-retry"
+                  aria-label={localize(language, 'Coba lagi', 'Retry')}
+                  title={localize(language, 'Coba lagi', 'Retry')}
+                  onClick={() => {
+                    if (location) setPrayerRefresh((count) => count + 1);
+                    else requestLocation();
+                  }}
+                >
+                  <LocateFixed size={14} />
+                </button>
+              )}
+            </div>
+            {prayerStatus && <p className="prayer-status" role="status">{localizeMessage(language, prayerStatus)}</p>}
+            {prayerTimes.length > 0 && (
+              <div className="prayer-list">{prayerTimes.map(([name, value]) => <div key={name}><span>{name}</span><strong>{value}</strong></div>)}</div>
+            )}
+            <label className="prayer-reminder-toggle"><input type="checkbox" checked={prayerReminders} onChange={(event) => setPrayerReminders(event.target.checked)} /> {localize(language, 'Ingatkan saat waktu salat', 'Remind me at prayer times')}</label>
+          </div>
+        )}
+        {tab === 'capture' && (
+          <div className="tool-card">
+            <button type="button" className="tool-primary" onClick={onCapture}>
+              <Camera size={16} />
+              <span>{localize(language, 'Ambil tangkapan layar', 'Take a screenshot')}</span>
+            </button>
+          </div>
+        )}
+        {tab === 'settings' && (
+          <div className="tool-card">
+            <header className="settings-page-heading">
+              <span className="settings-page-icon"><Settings size={16} /></span>
+              <div>
+                <h2>{localize(language, 'Pengaturan', 'Settings')}</h2>
+                <p>{localize(language, 'Atur notifikasi dan koneksi aplikasi.', 'Configure notifications and app connections.')}</p>
+                {clickUpConfig?.settings_path && (
+                  <small className="settings-location" title={clickUpConfig.settings_path}>
+                    {clickUpConfig.settings_path}
+                  </small>
+                )}
+              </div>
+            </header>
+
+            <p className="settings-group-label">{localize(language, 'UMUM', 'GENERAL')}</p>
+            <section className="settings-section settings-language-section">
+              <label className="settings-language-field">
+                <span>{localize(language, 'Bahasa', 'Language')}</span>
+                <select value={language} onChange={(event) => onLanguageChange(event.target.value as AppLanguage)}>
+                  <option value="id">Bahasa Indonesia</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
+            </section>
+
+            <section className="settings-section settings-position-section">
+              <label className="settings-section-title">
+                <strong>{localize(language, 'Posisi aplikasi', 'App position')}</strong>
+                <span className="settings-section-sub">{localize(language, 'Letak Dynamic Island di layar.', 'Position of Dynamic Island on screen.')}</span>
+              </label>
+              <div className="settings-position-options">
+                {([1, 0, 2] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`settings-position-btn ${islandPosition === value ? 'settings-position-btn-active' : ''}`}
+                    onClick={() => {
+                      const position: IslandPosition = value;
+                      onIslandPositionChange(position);
+                      void invoke('set_island_position', { position }).catch((error) => {
+                        console.warn('Tidak dapat mengubah posisi island:', error);
+                      });
+                    }}
+                    aria-pressed={islandPosition === value}
+                  >
+                    {value === 0 ? <LocateFixed size={14} /> : value === 1 ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}
+                    <span>{localize(language, value === 0 ? 'Atas' : value === 1 ? 'Kiri' : 'Kanan', value === 0 ? 'Top' : value === 1 ? 'Left' : 'Right')}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <p className="settings-group-label">{localize(language, 'NOTIFIKASI', 'NOTIFICATIONS')}</p>
+            <section className="settings-section settings-section--activity">
+              <button
+                className="settings-section-toggle"
+                type="button"
+                aria-expanded={expandedSettings.activity}
+                aria-controls="settings-activity-content"
+                onClick={() => setExpandedSettings((current) => ({ ...current, activity: !current.activity }))}
+              >
+                <span className="settings-section-icon"><Activity size={14} /></span>
+                <span className="settings-section-title">
+                  <strong>Windows Activity</strong>
+                  <small>{localize(language, 'Pilih aktivitas yang ingin ditampilkan.', 'Choose which activity notices to show.')}</small>
+                </span>
+                <span className="settings-enabled-count">
+                  {Object.values(activityModuleSettings).filter(Boolean).length} {localize(language, 'aktif', 'on')}
+                </span>
+                <ChevronRight className="settings-section-chevron" size={15} />
+              </button>
+              {expandedSettings.activity && (
+                <div className="settings-section-content" id="settings-activity-content">
+                  <div className="settings-list">
+                    {ACTIVITY_MODULES.map(({ id, label }) => (
+                      <label className="settings-row" key={id}>
+                        <span><strong>{getActivityModuleLabel(id, label, language)}</strong></span>
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          checked={activityModuleSettings[id]}
+                          onChange={(event) => onActivityModuleSettingsChange({
+                            ...activityModuleSettings,
+                            [id]: event.target.checked
+                          })}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="settings-section settings-section--notifications">
+              <button
+                className="settings-section-toggle"
+                type="button"
+                aria-expanded={expandedSettings.notifications}
+                aria-controls="settings-notifications-content"
+                onClick={() => setExpandedSettings((current) => ({ ...current, notifications: !current.notifications }))}
+              >
+                <span className="settings-section-icon"><Bell size={14} /></span>
+                <span className="settings-section-title">
+                  <strong>{localize(language, 'Notifikasi Windows', 'Windows notifications')}</strong>
+                  <small>{localize(language, 'Aktifkan notifikasi dari aplikasi Windows.', 'Show notifications from Windows apps.')}</small>
+                </span>
+                <ChevronRight className="settings-section-chevron" size={15} />
+              </button>
+              {expandedSettings.notifications && (
+                <div className="settings-section-content" id="settings-notifications-content">
+                  <label className="settings-row">
+                    <span><strong>{localize(language, 'Notifikasi aplikasi', 'App notifications')}</strong></span>
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={windowsNotificationNotices}
+                      onChange={(event) => onWindowsNotificationNoticesChange(event.target.checked)}
+                    />
+                  </label>
+                </div>
+              )}
+            </section>
+
+            <p className="settings-group-label">{localize(language, 'AKUN & LAYANAN', 'ACCOUNTS & SERVICES')}</p>
+            <section className="settings-section settings-section--clickup">
+              <button
+                className="settings-section-toggle"
+                type="button"
+                aria-expanded={expandedSettings.clickUp}
+                aria-controls="settings-clickup-content"
+                onClick={() => setExpandedSettings((current) => ({ ...current, clickUp: !current.clickUp }))}
+              >
+                <span className="settings-section-icon"><KeyRound size={14} /></span>
+                <span className="settings-section-title">
+                  <strong>ClickUp</strong>
+                  <small>{localize(language, 'Kelola kredensial dan daftar task.', 'Manage credentials and task lists.')}</small>
+                </span>
+                <ChevronRight className="settings-section-chevron" size={15} />
+              </button>
+              {expandedSettings.clickUp && (
+                <div className="settings-section-content" id="settings-clickup-content">
+                  <form className="settings-clickup-form" onSubmit={(event) => { void saveClickUpSettings(event); }}>
+                    <label className="settings-clickup-field">
+                      <span>Personal API key</span>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={clickUpApiKeyDraft}
+                        onChange={(event) => setClickUpApiKeyDraft(event.target.value)}
+                        placeholder={clickUpConfig?.api_key_configured ? localize(language, 'Tersimpan — kosongkan untuk mempertahankan', 'Saved — leave blank to keep it') : 'pk_…'}
+                      />
+                    </label>
+                    <label className="settings-clickup-field">
+                      <span>{localize(language, 'List ID (pisahkan dengan koma)', 'List IDs (comma-separated)')}</span>
+                      <input
+                        value={clickUpListIdsDraft}
+                        onChange={(event) => setClickUpListIdsDraft(event.target.value)}
+                        placeholder="901613807168"
+                        required
+                      />
+                    </label>
+                    <small className="settings-clickup-help">{localize(language, 'Disimpan aman di settings.json:', 'Saved in settings.json:')} {clickUpConfig?.settings_path}</small>
+                    {clickUpSettingsStatus && <p className="clickup-status" role="status">{localizeMessage(language, clickUpSettingsStatus)}</p>}
+                    <button className="tool-primary" type="submit" disabled={clickUpSettingsBusy}>
+                      {clickUpSettingsBusy ? localize(language, 'Menyimpan…', 'Saving…') : localize(language, 'Simpan pengaturan', 'Save settings')}
+                    </button>
+                  </form>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </section>
+  );
+}

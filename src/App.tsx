@@ -1,0 +1,720 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { motion, AnimatePresence } from 'framer-motion';
+import ToolsPanel, { type ClipboardItem } from './ToolsPanel';
+import { localize, readAppLanguage, type AppLanguage } from './i18n';
+import { readAppSetting, saveAppSetting } from './settings';
+import { getMediaProvider } from './mediaUtils';
+import AutoNoticeCard from './components/AutoNoticeCard';
+import BatteryDetail from './components/BatteryDetail';
+import Launcher from './components/Launcher';
+import MediaDetail from './components/MediaDetail';
+import { ACTIVITY_MODULE_DEFAULTS, type ActivityModule, type ActivityModuleSettings, type AutoNotice, type BatteryInfo, type SysData } from './types';
+import './App.css';
+
+interface ClipboardHistoryItem {
+  text: string;
+  timestamp: number;
+}
+
+type IslandMode = 'idle' | 'launcher' | 'autoNotice' | 'mediaDetail' | 'batteryDetail' | 'tools';
+type IslandPosition = 0 | 1 | 2; // 0 = top center, 1 = left center, 2 = right center
+
+function readLocalItems<T>(key: string): T[] {
+  const stored = readAppSetting<unknown>(key, []);
+  return Array.isArray(stored) ? stored as T[] : [];
+}
+
+function readLocalBoolean(key: string, fallback: boolean): boolean {
+  const stored = readAppSetting<unknown>(key, fallback);
+  return typeof stored === 'boolean' ? stored : fallback;
+}
+
+function readActivityModuleSettings(): ActivityModuleSettings {
+  const legacyEnabled = readLocalBoolean('di-windows-activity-notices', true);
+  const stored = readAppSetting<unknown>('di-windows-activity-modules', null);
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    return Object.fromEntries(
+      Object.keys(ACTIVITY_MODULE_DEFAULTS).map((key) => [key, legacyEnabled])
+    ) as ActivityModuleSettings;
+  }
+  return Object.fromEntries(
+    Object.entries(ACTIVITY_MODULE_DEFAULTS).map(([key, defaultValue]) => {
+      const value = (stored as Record<string, unknown>)[key];
+      return [key, typeof value === 'boolean' ? value : defaultValue];
+    })
+  ) as ActivityModuleSettings;
+}
+
+function readIslandPosition(): IslandPosition {
+  const value = readAppSetting<unknown>('di-island-position', 0);
+  return value === 1 || value === 2 ? value : 0;
+}
+
+export default function DynamicIsland() {
+  const [language, setLanguage] = useState<AppLanguage>(readAppLanguage);
+  const [sysData, setSysData] = useState<SysData>({
+    battery: null,
+    batteryState: 'Unknown',
+    batteryError: null,
+    volume: 50,
+    isWifiConnected: false,
+    activeWifiName: "",
+    capsLock: false,
+    numLock: false,
+    scrollLock: false,
+    microphoneMuted: false,
+    outputMuted: false,
+    media: null
+  });
+
+  const [islandMode, setIslandMode] = useState<IslandMode>('idle');
+  const [islandPosition, setIslandPosition] = useState<IslandPosition>(readIslandPosition);
+  const [viewport, setViewport] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight
+  }));
+  const [time, setTime] = useState(new Date());
+  const [autoNotice, setAutoNotice] = useState<AutoNotice | null>(null);
+  const [clipboardItems, setClipboardItems] = useState<ClipboardItem[]>(() => readLocalItems<ClipboardItem>('di-clipboard-history'));
+  const [shelfPaths, setShelfPaths] = useState<string[]>(() => readLocalItems<string>('di-file-shelf'));
+  const [showLyrics, setShowLyrics] = useState(false);
+  const [mediaArtwork, setMediaArtwork] = useState<string | null>(null);
+  const [activityModuleSettings, setActivityModuleSettings] = useState(readActivityModuleSettings);
+  const [windowsNotificationNotices, setWindowsNotificationNotices] = useState(
+    () => readLocalBoolean('di-windows-notification-notices', true)
+  );
+  const islandModeRef = useRef<IslandMode>('idle');
+  const islandRef = useRef<HTMLDivElement | null>(null);
+  const autoNoticeRef = useRef<AutoNotice | null>(null);
+  const previousSystemDataRef = useRef<SysData | null>(null);
+  const autoNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeDelayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoNoticeQueue = useRef<AutoNotice[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    const media = sysData.media;
+    if (!media || !getMediaProvider(media.source_app)) {
+      setMediaArtwork(null);
+      return () => { active = false; };
+    }
+
+    setMediaArtwork(null);
+    void invoke<string | null>('get_current_media_artwork')
+      .then((artwork) => {
+        if (active) setMediaArtwork(artwork);
+      })
+      .catch((error: unknown) => {
+        if (active) console.warn('Artwork media tidak tersedia:', error);
+      });
+    return () => { active = false; };
+  }, [sysData.media?.title, sysData.media?.artist, sysData.media?.source_app]);
+
+  useEffect(() => saveAppSetting('di-language', language), [language]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const updateViewport = () => setViewport({
+      width: window.innerWidth,
+      height: window.innerHeight
+    });
+    window.addEventListener('resize', updateViewport);
+    return () => window.removeEventListener('resize', updateViewport);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let updating = false;
+    let lastBounds = '';
+    const reportBounds = async () => {
+      const island = islandRef.current;
+      if (!active || !island || updating) return;
+
+      const { x, y, width, height } = island.getBoundingClientRect();
+      const boundsKey = `${x},${y},${width},${height}`;
+      if (boundsKey === lastBounds) return;
+
+      updating = true;
+      try {
+        await invoke('update_island_bounds', { x, y, width, height });
+        lastBounds = boundsKey;
+      } catch (error) {
+        console.error('Gagal memperbarui area klik Dynamic Island:', error);
+      } finally {
+        updating = false;
+      }
+    };
+
+    const timer = window.setInterval(() => { void reportBounds(); }, 30);
+    void reportBounds();
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => saveAppSetting('di-island-position', islandPosition), [islandPosition]);
+
+  useEffect(() => {
+    let active = true;
+    const refreshBattery = async () => {
+      try {
+        const battery = await invoke<BatteryInfo>('get_battery_info');
+        if (!active) return;
+        setSysData((current) => ({
+          ...current,
+          battery: battery.percentage,
+          batteryState: battery.state,
+          batteryError: null
+        }));
+      } catch (error) {
+        if (!active) return;
+        setSysData((current) => ({
+          ...current,
+          battery: null,
+          batteryState: 'Unknown',
+          batteryError: error instanceof Error ? error.message : String(error)
+        }));
+      }
+    };
+
+    void refreshBattery();
+    const timer = window.setInterval(() => { void refreshBattery(); }, 15_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlistenSystem = listen<SysData>('system-update', (event) => {
+      const current = event.payload;
+      const previous = previousSystemDataRef.current;
+      if (previous) {
+        const mediaChanged = previous.media?.title !== current.media?.title
+          || previous.media?.artist !== current.media?.artist
+          || previous.media?.source_app !== current.media?.source_app
+          || previous.media?.is_playing !== current.media?.is_playing;
+
+        if (mediaChanged && current.media?.is_playing) {
+          showAutoNotice({
+            kind: 'media',
+            title: current.media.title || 'Now Playing',
+            body: '',
+            media: current.media
+          });
+        } else {
+          if (mediaChanged && autoNoticeRef.current?.kind === 'media') {
+            clearAutoNotice();
+          }
+
+          const activityChanges: string[] = [];
+          if (activityModuleSettings.capsLock && previous.capsLock !== current.capsLock) activityChanges.push(`Caps Lock ${current.capsLock ? 'On' : 'Off'}`);
+          if (activityModuleSettings.numLock && previous.numLock !== current.numLock) activityChanges.push(`Num Lock ${current.numLock ? 'On' : 'Off'}`);
+          if (activityModuleSettings.scrollLock && previous.scrollLock !== current.scrollLock) activityChanges.push(`Scroll Lock ${current.scrollLock ? 'On' : 'Off'}`);
+          if (activityModuleSettings.microphone && previous.microphoneMuted !== current.microphoneMuted) activityChanges.push(`Microphone ${current.microphoneMuted ? 'Muted' : 'On'}`);
+          if (activityModuleSettings.speaker && previous.outputMuted !== current.outputMuted) activityChanges.push(`Speaker ${current.outputMuted ? 'Muted' : 'On'}`);
+          const volumeChanged = Math.abs(previous.volume - current.volume) >= 1;
+          if (activityModuleSettings.volume && volumeChanged) activityChanges.push(`Volume ${Math.round(current.volume)}%`);
+
+          if (activityChanges.length) {
+            showAutoNotice({
+              kind: 'activity',
+              title: 'Windows Activity',
+              body: activityChanges.join(' · '),
+              volumeLevel: activityModuleSettings.volume && volumeChanged ? current.volume : undefined,
+              previousVolumeLevel: activityModuleSettings.volume && volumeChanged ? previous.volume : undefined
+            });
+          }
+        }
+      } else if (current.media?.is_playing) {
+        showAutoNotice({
+          kind: 'media',
+          title: current.media.title || 'Now Playing',
+          body: '',
+          media: current.media
+        });
+      }
+
+      if (!current.media && islandModeRef.current === 'mediaDetail') {
+        islandModeRef.current = 'idle';
+        setIslandMode('idle');
+        setShowLyrics(false);
+      }
+      previousSystemDataRef.current = current;
+      setSysData(current);
+    });
+    return () => { unlistenSystem.then((f) => f()); };
+  }, [activityModuleSettings]);
+
+  useEffect(() => {
+    const unlistenClipboard = listen<string>('clipboard-activity', (event) => {
+      if (!activityModuleSettings.clipboard) return;
+      const labels: Record<string, string> = {
+        copied: 'Copied', cut: 'Cut', pasted: 'Pasted', 'clipboard-updated': 'Clipboard updated'
+      };
+      const activity = labels[event.payload] ?? 'Clipboard activity';
+      showAutoNotice({ kind: 'activity', title: 'Windows Activity', body: activity });
+    });
+    return () => { unlistenClipboard.then((f) => f()); };
+  }, [activityModuleSettings.clipboard]);
+
+  useEffect(() => {
+    const unlistenHistory = listen<ClipboardHistoryItem>('clipboard-history-item', (event) => {
+      setClipboardItems((items) => [
+        { text: event.payload.text, timestamp: Number(event.payload.timestamp) },
+        ...items.filter((item) => item.text !== event.payload.text)
+      ].slice(0, 50));
+    });
+    return () => { unlistenHistory.then((f) => f()); };
+  }, []);
+
+  useEffect(() => {
+    let unlistenDrop: (() => void) | undefined;
+    void getCurrentWindow().onDragDropEvent((event) => {
+      const payload = event.payload;
+      if (payload.type !== 'drop') return;
+      setShelfPaths((items) => [...new Set([...payload.paths, ...items])].slice(0, 30));
+      if (islandModeRef.current === 'idle') openLauncher();
+    }).then((unlisten) => { unlistenDrop = unlisten; });
+    return () => { unlistenDrop?.(); };
+  }, []);
+
+  useEffect(() => saveAppSetting('di-clipboard-history', clipboardItems), [clipboardItems]);
+  useEffect(() => saveAppSetting('di-file-shelf', shelfPaths), [shelfPaths]);
+  useEffect(() => saveAppSetting('di-windows-activity-modules', activityModuleSettings), [activityModuleSettings]);
+  useEffect(() => saveAppSetting('di-windows-notification-notices', windowsNotificationNotices), [windowsNotificationNotices]);
+
+  useEffect(() => {
+    let active = true;
+    let unlistenSystemNotification: (() => void) | undefined;
+    void listen<AutoNotice>('system-notification', (event) => {
+      const notice = event.payload;
+      if (notice.kind === 'notification') {
+        if (windowsNotificationNotices) showAutoNotice(notice);
+        return;
+      }
+
+      const content = `${notice.title} ${notice.body}`.toLowerCase();
+      const module: ActivityModule | null = content.includes('wi-fi') || content.includes('wifi')
+        ? 'wifi'
+        : content.includes('brightness')
+          ? 'brightness'
+          : content.includes('power connected') || content.includes('power disconnected')
+            ? 'power'
+            : content.includes('battery')
+              ? 'battery'
+              : null;
+      if (module && activityModuleSettings[module]) showAutoNotice(notice);
+    })
+      .then((unlisten) => {
+        if (active) unlistenSystemNotification = unlisten;
+        else unlisten();
+      });
+    if (windowsNotificationNotices) {
+      void invoke<string>('request_windows_notification_access').catch((error) => {
+        console.warn('Windows notification access is unavailable:', error);
+      });
+    }
+    return () => {
+      active = false;
+      unlistenSystemNotification?.();
+    };
+  }, [activityModuleSettings, windowsNotificationNotices]);
+
+  useEffect(() => () => {
+    if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+    if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
+  }, []);
+
+  const handleMediaAction = async (action: 'previous' | 'playPause' | 'next') => {
+    try {
+      await invoke('control_media', { action });
+    } catch (error) {
+      console.error('Gagal mengontrol media:', error);
+    }
+  };
+
+  const openTools = () => {
+    if (islandModeRef.current !== 'launcher') return;
+    if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+    autoNoticeTimer.current = null;
+    islandModeRef.current = 'tools';
+    setIslandMode('tools');
+  };
+
+  const openLauncher = () => {
+    if (islandModeRef.current !== 'idle') return;
+    if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+    autoNoticeTimer.current = null;
+    islandModeRef.current = 'launcher';
+    setIslandMode('launcher');
+  };
+
+  const returnToLauncher = () => {
+    if (islandModeRef.current === 'idle' || islandModeRef.current === 'autoNotice') return;
+    setShowLyrics(false);
+    islandModeRef.current = 'launcher';
+    setIslandMode('launcher');
+  };
+
+  const handleToolNotice = useCallback((title: string, body: string) => {
+    showAutoNotice({ kind: 'system', title, body });
+  }, []);
+
+  const openMediaDetail = () => {
+    if (!sysData.media || islandModeRef.current !== 'launcher') return;
+    if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+    autoNoticeTimer.current = null;
+    autoNoticeRef.current = null;
+    setAutoNotice(null);
+    setShowLyrics(false);
+    islandModeRef.current = 'mediaDetail';
+    setIslandMode('mediaDetail');
+  };
+
+  const openBatteryDetail = () => {
+    if (islandModeRef.current !== 'launcher') return;
+    islandModeRef.current = 'batteryDetail';
+    setIslandMode('batteryDetail');
+  };
+
+  const clearAutoNotice = () => {
+    if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+    autoNoticeTimer.current = null;
+    autoNoticeQueue.current = [];
+    autoNoticeRef.current = null;
+    setAutoNotice(null);
+    if (islandModeRef.current === 'autoNotice') {
+      islandModeRef.current = 'idle';
+      setIslandMode('idle');
+    }
+  };
+
+  const showNextAutoNotice = (notice: AutoNotice) => {
+    autoNoticeRef.current = notice;
+    setAutoNotice(notice);
+    islandModeRef.current = 'autoNotice';
+    setIslandMode('autoNotice');
+
+    autoNoticeTimer.current = setTimeout(() => {
+      autoNoticeTimer.current = null;
+      const nextNotice = autoNoticeQueue.current.shift();
+      if (nextNotice) {
+        showNextAutoNotice(nextNotice);
+      } else {
+        clearAutoNotice();
+      }
+    }, 3600);
+  };
+
+  const showAutoNotice = (notice: AutoNotice) => {
+    if (islandModeRef.current !== 'idle' && islandModeRef.current !== 'autoNotice' && islandModeRef.current !== 'tools') return;
+
+    const queuedNotices = autoNoticeQueue.current;
+    const lastNotice = queuedNotices[queuedNotices.length - 1] ?? autoNoticeRef.current;
+    if (lastNotice?.kind === notice.kind && lastNotice.title === notice.title && lastNotice.body === notice.body) return;
+    if (islandModeRef.current === 'autoNotice') {
+      autoNoticeQueue.current.push(notice);
+      return;
+    }
+
+    if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+    autoNoticeTimer.current = null;
+    showNextAutoNotice(notice);
+  };
+
+  const closeIsland = async () => {
+    if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
+    closeDelayTimer.current = null;
+    if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+    autoNoticeTimer.current = null;
+    autoNoticeQueue.current = [];
+    autoNoticeRef.current = null;
+    setShowLyrics(false);
+    islandModeRef.current = 'idle';
+    setAutoNotice(null);
+    setIslandMode('idle');
+  };
+
+  const lockWindows = async () => {
+    await closeIsland();
+    try {
+      await invoke('lock_windows');
+    } catch (error) {
+      console.error('Gagal mengunci Windows:', error);
+      showAutoNotice({
+        kind: 'system',
+        title: 'Gagal mengunci Windows',
+        body: error instanceof Error ? error.message : String(error)
+      });
+    }
+  };
+
+  const openSnippingTool = async () => {
+    await closeIsland();
+    try {
+      await invoke('open_snipping_tool');
+    } catch (error) {
+      console.error('Gagal membuka Snipping Tool:', error);
+      showAutoNotice({
+        kind: 'system',
+        title: 'Gagal membuka Snipping Tool',
+        body: error instanceof Error ? error.message : String(error)
+      });
+    }
+  };
+
+  const formattedTime = time.toLocaleTimeString(language === 'id' ? 'id-ID' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+  const batteryAvailable = sysData.battery !== null;
+  const batteryLevel = Math.max(0, Math.min(sysData.battery ?? 0, 100));
+  const batteryColor = !batteryAvailable
+    ? '#8993a0'
+    : sysData.batteryState === 'Charging'
+    ? '#65c9a5'
+    : batteryLevel <= 15
+      ? '#f87171'
+      : batteryLevel <= 30
+        ? '#fbbf24'
+        : '#a3d977';
+  const batteryStatus = sysData.batteryState === 'Charging'
+    ? localize(language, 'Sedang mengisi daya', 'Charging')
+    : sysData.batteryState === 'Full'
+      ? localize(language, 'Baterai penuh', 'Battery full')
+      : sysData.batteryState === 'Discharging'
+        ? localize(language, 'Menggunakan daya baterai', 'On battery power')
+        : sysData.batteryError
+          ? localize(language, 'Gagal membaca status daya', 'Unable to read power status')
+          : localize(language, 'Status daya tidak diketahui', 'Power status unknown');
+  const batteryStateLabel = sysData.batteryState === 'Charging'
+    ? localize(language, 'Mengisi daya', 'Charging')
+    : sysData.batteryState === 'Full'
+      ? localize(language, 'Penuh', 'Full')
+      : sysData.batteryState === 'Discharging'
+        ? localize(language, 'Tidak terhubung', 'Not plugged in')
+        : localize(language, 'Tidak diketahui', 'Unknown');
+  const batteryHealthLabel = batteryLevel <= 15
+    ? localize(language, 'Segera isi daya', 'Charge soon')
+    : batteryLevel <= 30
+      ? localize(language, 'Daya baterai rendah', 'Low battery')
+      : batteryLevel >= 80
+        ? localize(language, 'Daya baterai cukup', 'Battery level is good')
+        : localize(language, 'Daya baterai normal', 'Battery level is normal');
+  const mediaProvider = sysData.media ? getMediaProvider(sysData.media.source_app) : null;
+  const noticeArtwork = autoNotice?.media
+    && autoNotice.media.title === sysData.media?.title
+    && autoNotice.media.source_app === sysData.media?.source_app
+    ? mediaArtwork
+    : null;
+  const isSidePosition = islandPosition !== 0;
+  const topPanelWidth = Math.max(0, Math.min(400, viewport.width - 24));
+  const sideWidth = Math.max(0, Math.min(290, Math.max(220, viewport.width * 0.25), viewport.width - 24));
+  const sideHeight = Math.max(0, Math.min(460, viewport.height - 24));
+  const sideLauncherHeight = Math.min(360, sideHeight);
+
+  const islandVariants = {
+    idle: {
+      height: islandPosition === 0 ? 38 : 92,
+      width: islandPosition === 0 ? 92 : 38,
+      borderTopLeftRadius: islandPosition === 1 || islandPosition === 0 ? 0 : 12,
+      borderTopRightRadius: islandPosition === 2 || islandPosition === 0 ? 0 : 12,
+      borderBottomLeftRadius: islandPosition === 1 ? 0 : 12,
+      borderBottomRightRadius: islandPosition === 2 ? 0 : 12,
+    },
+    launcher: {
+      width: isSidePosition ? sideWidth : topPanelWidth,
+      height: isSidePosition ? sideLauncherHeight : 76,
+      borderRadius: 16,
+    },
+    autoNotice: {
+      width: isSidePosition ? sideWidth : Math.min(360, topPanelWidth),
+      height: isSidePosition
+        ? (autoNotice?.volumeLevel !== undefined ? Math.min(220, sideHeight) : Math.min(170, sideHeight))
+        : (autoNotice?.volumeLevel !== undefined ? 86 : 72),
+      borderRadius: 14,
+    },
+    mediaDetail: {
+      width: isSidePosition ? sideWidth : Math.min(370, topPanelWidth),
+      height: isSidePosition
+        ? Math.min(showLyrics ? 390 : 300, sideHeight)
+        : (showLyrics ? 222 : 150),
+      borderRadius: 18,
+    },
+    batteryDetail: {
+      width: isSidePosition ? sideWidth : Math.min(280, topPanelWidth),
+      height: isSidePosition ? Math.min(280, sideHeight) : 170,
+      borderRadius: 18,
+    },
+    tools: {
+      width: isSidePosition ? sideWidth : topPanelWidth,
+      height: isSidePosition ? sideHeight : Math.min(360, viewport.height - 24),
+      borderRadius: 18,
+    }
+  };
+
+  const springTransition = { type: 'spring', stiffness: 155, damping: 30, mass: 0.9 };
+  const panelTransition = { duration: 0.32, ease: [0.22, 1, 0.36, 1] };
+  const sideTravel = islandPosition === 1 ? -7 : islandPosition === 2 ? 7 : 0;
+  const verticalTravel = islandPosition === 0 ? -6 : 0;
+
+  return (
+    <div className={`w-screen h-screen flex ${
+      islandPosition === 0 ? 'justify-center items-start' :
+      islandPosition === 1 ? 'justify-start items-center' :
+      'justify-end items-center'
+    } bg-transparent box-border select-none pointer-events-none`}>
+      <motion.div
+        ref={islandRef}
+        className={`island-shell bg-[#0a0a0a]/85 backdrop-blur-xl border border-white/10 text-zinc-100 overflow-hidden shadow-[0_15px_40px_rgba(0,0,0,0.8)] cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'}`}
+        variants={islandVariants}
+        initial="idle"
+        animate={islandMode}
+        transition={springTransition}
+        onPointerEnter={() => {
+          if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
+          closeDelayTimer.current = null;
+        }}
+        onPointerLeave={() => {
+          if (islandModeRef.current === 'idle') return;
+          if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
+          closeDelayTimer.current = window.setTimeout(() => {
+            closeDelayTimer.current = null;
+            if (islandModeRef.current !== 'idle') void closeIsland();
+          }, 2000);
+        }}
+      >
+        <AnimatePresence mode="wait" initial={false}>
+
+          {islandMode === 'autoNotice' && autoNotice && (
+            <AutoNoticeCard
+              notice={autoNotice}
+              language={language}
+              artwork={noticeArtwork}
+              travelX={sideTravel}
+              travelY={verticalTravel}
+              transition={panelTransition}
+              onDismiss={() => { void closeIsland(); }}
+            />
+          )}
+          
+          {/* ============================== */}
+          {/* MODE 1: IDLE */}
+          {/* ============================== */}
+          {islandMode === 'idle' && (
+            <motion.div
+              key="idle"
+              className="island-idle flex items-center justify-between w-full h-full px-3 box-border"
+              initial={{ opacity: 0, scale: 0.97, filter: 'blur(2px)' }}
+              animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, scale: 0.99, filter: 'blur(2px)' }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <button
+                className="idle-clock"
+                aria-label={localize(language, 'Buka menu', 'Open menu')}
+                title={localize(language, 'Buka menu', 'Open menu')}
+                onClick={openLauncher}
+              >
+                {formattedTime.replace('.', ':')}
+              </button>
+            </motion.div>
+          )}
+
+          {islandMode === 'launcher' && (
+            <Launcher
+              language={language}
+              media={sysData.media}
+              artwork={mediaArtwork}
+              batteryAvailable={batteryAvailable}
+              batteryLevel={batteryLevel}
+              batteryColor={batteryColor}
+              batteryCharging={sysData.batteryState === 'Charging'}
+              travelX={sideTravel}
+              travelY={verticalTravel}
+              transition={panelTransition}
+              onOpenTools={openTools}
+              onOpenMedia={openMediaDetail}
+              onOpenBattery={openBatteryDetail}
+              onLock={() => { void lockWindows(); }}
+            />
+          )}
+
+          {islandMode === 'mediaDetail' && sysData.media && (
+            <MediaDetail
+              media={sysData.media}
+              provider={mediaProvider}
+              artwork={mediaArtwork}
+              language={language}
+              showLyrics={showLyrics}
+              travelX={sideTravel}
+              travelY={verticalTravel}
+              transition={panelTransition}
+              onToggleLyrics={() => setShowLyrics((visible) => !visible)}
+              onReturnToLauncher={returnToLauncher}
+              onMediaAction={(action) => { void handleMediaAction(action); }}
+            />
+          )}
+
+          <motion.div
+            key="tools-panel"
+            className="tools-panel-wrap"
+            style={{ display: islandMode === 'tools' ? 'block' : 'none' }}
+            initial={false}
+            animate={islandMode === 'tools'
+              ? { opacity: 1, x: 0, y: 0, scale: 1 }
+              : { opacity: 0, x: sideTravel, y: verticalTravel, scale: 0.995 }}
+            transition={panelTransition}
+          >
+              <ToolsPanel
+                language={language}
+                onLanguageChange={setLanguage}
+                clipboardItems={clipboardItems}
+                shelfPaths={shelfPaths}
+                activityModuleSettings={activityModuleSettings}
+                windowsNotificationNotices={windowsNotificationNotices}
+                onActivityModuleSettingsChange={setActivityModuleSettings}
+                onWindowsNotificationNoticesChange={setWindowsNotificationNotices}
+                onClose={() => { void closeIsland(); }}
+                onReturnToMenu={returnToLauncher}
+                onClearClipboard={() => setClipboardItems([])}
+                onRemoveShelfItem={(path) => setShelfPaths((items) => items.filter((item) => item !== path))}
+                onCopyClipboard={(text) => {
+                  void invoke('write_clipboard_text', { text }).catch((error) => console.error('Gagal menyalin teks:', error));
+                }}
+                onNotice={handleToolNotice}
+                onCapture={() => { void openSnippingTool(); }}
+                islandPosition={islandPosition}
+                onIslandPositionChange={setIslandPosition}
+              />
+          </motion.div>
+
+          {islandMode === 'batteryDetail' && (
+            <BatteryDetail
+              available={batteryAvailable}
+              level={batteryLevel}
+              color={batteryColor}
+              status={batteryStatus}
+              charging={sysData.batteryState === 'Charging'}
+              healthLabel={batteryHealthLabel}
+              stateLabel={batteryStateLabel}
+              error={sysData.batteryError}
+              language={language}
+              travelX={sideTravel}
+              travelY={verticalTravel}
+              transition={panelTransition}
+              onClose={returnToLauncher}
+            />
+          )}
+
+        </AnimatePresence>
+      </motion.div>
+    </div>
+  );
+}
