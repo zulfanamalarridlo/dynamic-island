@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback, type CSSProperties } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence, domAnimation, LazyMotion, m } from 'framer-motion';
 import { Battery, BatteryCharging, Cpu, HardDrive, Music2, Wifi } from 'lucide-react';
 import ToolsPanel, { type ClipboardItem } from './ToolsPanel';
 import { localize, readAppLanguage, type AppLanguage } from './i18n';
@@ -11,10 +11,11 @@ import { readWindhawkSettings, saveWindhawkSettings } from './windhawkSettings';
 import { getMediaProvider } from './mediaUtils';
 import AutoNoticeCard from './components/AutoNoticeCard';
 import Launcher from './components/Launcher';
-import MediaDetail from './components/MediaDetail';
-import SystemMonitorDetail from './components/SystemMonitorDetail';
 import { ACTIVITY_MODULE_DEFAULTS, type ActivityModule, type ActivityModuleSettings, type AutoNotice, type BatteryInfo, type SysData } from './types';
 import './App.css';
+
+const MediaDetail = lazy(() => import('./components/MediaDetail'));
+const SystemMonitorDetail = lazy(() => import('./components/SystemMonitorDetail'));
 
 interface ClipboardHistoryItem {
   text: string;
@@ -106,11 +107,16 @@ export default function DynamicIsland() {
   const islandModeRef = useRef<IslandMode>('idle');
   const islandRef = useRef<HTMLDivElement | null>(null);
   const scheduleBoundsReportRef = useRef<() => void>(() => {});
+  const activityModuleSettingsRef = useRef(activityModuleSettings);
+  const windowsNotificationNoticesRef = useRef(windowsNotificationNotices);
   const autoNoticeRef = useRef<AutoNotice | null>(null);
   const previousSystemDataRef = useRef<SysData | null>(null);
   const autoNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeDelayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoNoticeQueue = useRef<AutoNotice[]>([]);
+
+  activityModuleSettingsRef.current = activityModuleSettings;
+  windowsNotificationNoticesRef.current = windowsNotificationNotices;
 
   useEffect(() => {
     let active = true;
@@ -135,6 +141,11 @@ export default function DynamicIsland() {
     let active = true;
     let unlisten: (() => void) | null = null;
     void listen('tray-open-settings', () => {
+      if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+      autoNoticeTimer.current = null;
+      if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
+      closeDelayTimer.current = null;
+      islandModeRef.current = 'tools';
       setIslandMode('tools');
       setOpenSettingsRequest((request) => request + 1);
     }).then((stopListening) => {
@@ -159,8 +170,8 @@ export default function DynamicIsland() {
   }, [windhawkSettings.appearance.sizeScale, windhawkSettings.themes.textScale]);
 
   useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
+    const timer = window.setInterval(() => setTime(new Date()), 15_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -271,9 +282,8 @@ export default function DynamicIsland() {
 
   useEffect(() => {
     let active = true;
-    const refreshBattery = async () => {
-      try {
-        const battery = await invoke<BatteryInfo>('get_battery_info');
+    void invoke<BatteryInfo>('get_battery_info')
+      .then((battery) => {
         if (!active) return;
         setSysData((current) => ({
           ...current,
@@ -281,7 +291,8 @@ export default function DynamicIsland() {
           batteryState: battery.state,
           batteryError: null
         }));
-      } catch (error) {
+      })
+      .catch((error: unknown) => {
         if (!active) return;
         setSysData((current) => ({
           ...current,
@@ -289,14 +300,9 @@ export default function DynamicIsland() {
           batteryState: 'Unknown',
           batteryError: error instanceof Error ? error.message : String(error)
         }));
-      }
-    };
-
-    void refreshBattery();
-    const timer = window.setInterval(() => { void refreshBattery(); }, 15_000);
+      });
     return () => {
       active = false;
-      window.clearInterval(timer);
     };
   }, []);
 
@@ -304,6 +310,7 @@ export default function DynamicIsland() {
     const unlistenSystem = listen<SysData>('system-update', (event) => {
       const current = event.payload;
       const previous = previousSystemDataRef.current;
+      const moduleSettings = activityModuleSettingsRef.current;
       if (previous) {
         const mediaChanged = previous.media?.title !== current.media?.title
           || previous.media?.artist !== current.media?.artist
@@ -323,21 +330,21 @@ export default function DynamicIsland() {
           }
 
           const activityChanges: string[] = [];
-          if (activityModuleSettings.capsLock && previous.capsLock !== current.capsLock) activityChanges.push(`Caps Lock ${current.capsLock ? 'On' : 'Off'}`);
-          if (activityModuleSettings.numLock && previous.numLock !== current.numLock) activityChanges.push(`Num Lock ${current.numLock ? 'On' : 'Off'}`);
-          if (activityModuleSettings.scrollLock && previous.scrollLock !== current.scrollLock) activityChanges.push(`Scroll Lock ${current.scrollLock ? 'On' : 'Off'}`);
-          if (activityModuleSettings.microphone && previous.microphoneMuted !== current.microphoneMuted) activityChanges.push(`Microphone ${current.microphoneMuted ? 'Muted' : 'On'}`);
-          if (activityModuleSettings.speaker && previous.outputMuted !== current.outputMuted) activityChanges.push(`Speaker ${current.outputMuted ? 'Muted' : 'On'}`);
+          if (moduleSettings.capsLock && previous.capsLock !== current.capsLock) activityChanges.push(`Caps Lock ${current.capsLock ? 'On' : 'Off'}`);
+          if (moduleSettings.numLock && previous.numLock !== current.numLock) activityChanges.push(`Num Lock ${current.numLock ? 'On' : 'Off'}`);
+          if (moduleSettings.scrollLock && previous.scrollLock !== current.scrollLock) activityChanges.push(`Scroll Lock ${current.scrollLock ? 'On' : 'Off'}`);
+          if (moduleSettings.microphone && previous.microphoneMuted !== current.microphoneMuted) activityChanges.push(`Microphone ${current.microphoneMuted ? 'Muted' : 'On'}`);
+          if (moduleSettings.speaker && previous.outputMuted !== current.outputMuted) activityChanges.push(`Speaker ${current.outputMuted ? 'Muted' : 'On'}`);
           const volumeChanged = Math.abs(previous.volume - current.volume) >= 1;
-          if (activityModuleSettings.volume && volumeChanged) activityChanges.push(`Volume ${Math.round(current.volume)}%`);
+          if (moduleSettings.volume && volumeChanged) activityChanges.push(`Volume ${Math.round(current.volume)}%`);
 
           if (activityChanges.length) {
             showAutoNotice({
               kind: 'activity',
               title: 'Windows Activity',
               body: activityChanges.join(' · '),
-              volumeLevel: activityModuleSettings.volume && volumeChanged ? current.volume : undefined,
-              previousVolumeLevel: activityModuleSettings.volume && volumeChanged ? previous.volume : undefined
+              volumeLevel: moduleSettings.volume && volumeChanged ? current.volume : undefined,
+              previousVolumeLevel: moduleSettings.volume && volumeChanged ? previous.volume : undefined
             });
           }
         }
@@ -359,11 +366,11 @@ export default function DynamicIsland() {
       setSysData(current);
     });
     return () => { unlistenSystem.then((f) => f()); };
-  }, [activityModuleSettings]);
+  }, []);
 
   useEffect(() => {
     const unlistenClipboard = listen<string>('clipboard-activity', (event) => {
-      if (!activityModuleSettings.clipboard) return;
+      if (!activityModuleSettingsRef.current.clipboard) return;
       const labels: Record<string, string> = {
         copied: 'Copied', cut: 'Cut', pasted: 'Pasted', 'clipboard-updated': 'Clipboard updated'
       };
@@ -371,7 +378,7 @@ export default function DynamicIsland() {
       showAutoNotice({ kind: 'activity', title: 'Windows Activity', body: activity });
     });
     return () => { unlistenClipboard.then((f) => f()); };
-  }, [activityModuleSettings.clipboard]);
+  }, []);
 
   useEffect(() => {
     const unlistenHistory = listen<ClipboardHistoryItem>('clipboard-history-item', (event) => {
@@ -405,7 +412,7 @@ export default function DynamicIsland() {
     void listen<AutoNotice>('system-notification', (event) => {
       const notice = event.payload;
       if (notice.kind === 'notification') {
-        if (windowsNotificationNotices) showAutoNotice(notice);
+        if (windowsNotificationNoticesRef.current) showAutoNotice(notice);
         return;
       }
 
@@ -419,22 +426,24 @@ export default function DynamicIsland() {
             : content.includes('battery')
               ? 'battery'
               : null;
-      if (module && activityModuleSettings[module]) showAutoNotice(notice);
+      if (module && activityModuleSettingsRef.current[module]) showAutoNotice(notice);
     })
       .then((unlisten) => {
         if (active) unlistenSystemNotification = unlisten;
         else unlisten();
       });
-    if (windowsNotificationNotices) {
-      void invoke<string>('request_windows_notification_access').catch((error) => {
-        console.warn('Windows notification access is unavailable:', error);
-      });
-    }
     return () => {
       active = false;
       unlistenSystemNotification?.();
     };
-  }, [activityModuleSettings, windowsNotificationNotices]);
+  }, []);
+
+  useEffect(() => {
+    if (!windowsNotificationNotices) return;
+    void invoke<string>('request_windows_notification_access').catch((error) => {
+      console.warn('Windows notification access is unavailable:', error);
+    });
+  }, [windowsNotificationNotices]);
 
   useEffect(() => () => {
     if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
@@ -682,14 +691,15 @@ export default function DynamicIsland() {
   };
 
   return (
+    <LazyMotion features={domAnimation}>
     <div className={`w-screen h-screen flex ${
       islandPosition === 0 ? 'justify-center items-start' :
       islandPosition === 1 ? 'justify-start items-center' :
       'justify-end items-center'
     } box-border select-none pointer-events-none`}>
-      <motion.div
+      <m.div
         ref={islandRef}
-        className={`island-shell backdrop-blur-xl border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
+        className={`island-shell${pillOpacity < 96 ? ' backdrop-blur-xl' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
         style={islandStyle}
         variants={islandVariants}
         initial="idle"
@@ -727,12 +737,12 @@ export default function DynamicIsland() {
           {/* MODE 1: IDLE */}
           {/* ============================== */}
           {islandMode === 'idle' && (
-            <motion.div
+            <m.div
               key="idle"
               className={`island-idle${isSidePosition ? ' island-idle--side' : ' island-idle--top'}${hasPinnedIdleContent ? ' island-idle--pinned' : ''}`}
-              initial={{ opacity: 0, scale: 0.97, filter: 'blur(2px)' }}
-              animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-              exit={{ opacity: 0, scale: 0.99, filter: 'blur(2px)' }}
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.99 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             >
               <button
@@ -816,7 +826,7 @@ export default function DynamicIsland() {
                   <span className="idle-battery__percent">{batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}</span>
                 </button>
               )}
-            </motion.div>
+            </m.div>
           )}
 
           {islandMode === 'launcher' && (
@@ -835,47 +845,51 @@ export default function DynamicIsland() {
           )}
 
           {islandMode === 'mediaDetail' && sysData.media && (
-            <MediaDetail
-              media={sysData.media}
-              provider={mediaProvider}
-              artwork={mediaArtwork}
-              language={language}
-              showLyrics={showLyrics}
-              pinned={mediaPinned}
-              travelX={sideTravel}
-              travelY={verticalTravel}
-              transition={panelTransition}
-              onToggleLyrics={() => setShowLyrics((visible) => !visible)}
-              onTogglePin={() => setMediaPinned((pinned) => !pinned)}
-              onReturnToLauncher={returnToLauncher}
-              onMediaAction={(action) => { void handleMediaAction(action); }}
-            />
+            <Suspense fallback={null}>
+              <MediaDetail
+                media={sysData.media}
+                provider={mediaProvider}
+                artwork={mediaArtwork}
+                language={language}
+                showLyrics={showLyrics}
+                pinned={mediaPinned}
+                travelX={sideTravel}
+                travelY={verticalTravel}
+                transition={panelTransition}
+                onToggleLyrics={() => setShowLyrics((visible) => !visible)}
+                onTogglePin={() => setMediaPinned((pinned) => !pinned)}
+                onReturnToLauncher={returnToLauncher}
+                onMediaAction={(action) => { void handleMediaAction(action); }}
+              />
+            </Suspense>
           )}
 
           {islandMode === 'systemMonitor' && (
-            <SystemMonitorDetail
-              language={language}
-              cpuUsage={sysData.cpuUsage}
-              memoryUsedBytes={sysData.memoryUsedBytes}
-              memoryTotalBytes={sysData.memoryTotalBytes}
-              batteryAvailable={batteryAvailable}
-              batteryLevel={batteryLevel}
-              batteryColor={batteryColor}
-              batteryCharging={sysData.batteryState === 'Charging'}
-              pinned={monitorPinned}
-              onTogglePin={() => setMonitorPinned((pinned) => !pinned)}
-              isWifiConnected={sysData.isWifiConnected}
-              activeWifiName={sysData.activeWifiName}
-              travelX={sideTravel}
-              travelY={verticalTravel}
-              transition={panelTransition}
-              onClose={returnToLauncher}
-            />
+            <Suspense fallback={null}>
+              <SystemMonitorDetail
+                language={language}
+                cpuUsage={sysData.cpuUsage}
+                memoryUsedBytes={sysData.memoryUsedBytes}
+                memoryTotalBytes={sysData.memoryTotalBytes}
+                batteryAvailable={batteryAvailable}
+                batteryLevel={batteryLevel}
+                batteryColor={batteryColor}
+                batteryCharging={sysData.batteryState === 'Charging'}
+                pinned={monitorPinned}
+                onTogglePin={() => setMonitorPinned((pinned) => !pinned)}
+                isWifiConnected={sysData.isWifiConnected}
+                activeWifiName={sysData.activeWifiName}
+                travelX={sideTravel}
+                travelY={verticalTravel}
+                transition={panelTransition}
+                onClose={returnToLauncher}
+              />
+            </Suspense>
           )}
 
         </AnimatePresence>
 
-        <motion.div
+        <m.div
           className="tools-panel-wrap"
           style={{ display: islandMode === 'tools' ? 'block' : 'none' }}
           initial={false}
@@ -910,8 +924,9 @@ export default function DynamicIsland() {
             onWindhawkSettingsChange={setWindhawkSettings}
             openSettingsRequest={openSettingsRequest}
           />
-        </motion.div>
-      </motion.div>
+        </m.div>
+      </m.div>
     </div>
+    </LazyMotion>
   );
 }

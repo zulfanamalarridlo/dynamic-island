@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { openPath } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, m } from 'framer-motion';
 import {
   Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, File, KeyRound, ListTodo,
   LocateFixed, Pause, Play, Plus, RotateCcw, Scissors, Settings, Video, X
@@ -355,10 +355,15 @@ export default function ToolsPanel({
   const [prayerStatus, setPrayerStatus] = useState('');
   const [prayerRefresh, setPrayerRefresh] = useState(0);
 
+  const remainingRef = useRef(remaining);
+  remainingRef.current = remaining;
+
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    if (tab !== 'prayer' && !prayerReminders) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [tab, prayerReminders]);
   useEffect(() => {
     let active = true;
     let unlisten: (() => void) | undefined;
@@ -431,7 +436,12 @@ export default function ToolsPanel({
     return () => window.clearTimeout(timer);
   }, [running, remaining, isBreak, focusMinutes, breakMinutes, onNotice, language]);
 
-  useEffect(() => saveAppSetting('di-focus-remaining', remaining), [remaining]);
+  useEffect(() => {
+    if (!running) saveAppSetting('di-focus-remaining', remaining);
+  }, [running, remaining]);
+  useEffect(() => () => {
+    saveAppSetting('di-focus-remaining', remainingRef.current);
+  }, []);
   useEffect(() => saveAppSetting('di-focus-minutes', focusMinutes), [focusMinutes]);
   useEffect(() => saveAppSetting('di-break-minutes', breakMinutes), [breakMinutes]);
   useEffect(() => saveAppSetting('di-focus-sessions', sessions), [sessions]);
@@ -699,7 +709,7 @@ export default function ToolsPanel({
       </nav>
       <div className="tools-content">
         <AnimatePresence mode="wait" initial={false}>
-          <motion.div
+          <m.div
             key={tab}
             className="tools-tab-panel"
             initial={{ opacity: 0, y: 5, filter: 'blur(2px)' }}
@@ -1229,7 +1239,7 @@ export default function ToolsPanel({
             </section>
           </div>
         )}
-          </motion.div>
+          </m.div>
         </AnimatePresence>
       </div>
     </section>

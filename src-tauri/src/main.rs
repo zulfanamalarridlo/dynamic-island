@@ -289,6 +289,7 @@ fn get_clickup_config() -> Result<ClickUpConfig, String> {
         api_key_configured: settings.click_up.api_key.trim().starts_with("pk_"),
         list_ids: settings.click_up.list_ids,
         settings_path: app_settings_path()?.display().to_string(),
+        task_template: settings.click_up.task_template,
     })
 }
 
@@ -309,6 +310,7 @@ fn save_clickup_config(api_key: String, list_ids: String) -> Result<ClickUpConfi
         settings.click_up = ClickUpSettings {
             api_key: token,
             list_ids: ids,
+            task_template: settings.click_up.task_template.clone(),
         };
         Ok(())
     })?;
@@ -1270,92 +1272,83 @@ fn control_media(action: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn get_battery_info() -> Result<BatteryInfo, String> {
-    let battery_reading = (|| {
-        let manager = BatteryManager::new().map_err(|error| error.to_string())?;
-        let mut batteries = manager.batteries().map_err(|error| error.to_string())?;
-        let mut weighted_charge = 0.0_f32;
-        let mut total_capacity = 0.0_f32;
-        let mut unweighted_charge = 0.0_f32;
-        let mut battery_count = 0_u32;
-        let mut is_charging = false;
-        let mut is_discharging = false;
-        let mut all_full = true;
-
-        while let Some(battery_result) = batteries.next() {
-            let Ok(battery) = battery_result else {
-                continue;
-            };
-            let charge = battery.state_of_charge().value * 100.0;
-            if !charge.is_finite() || !(0.0..=100.0).contains(&charge) {
-                continue;
-            }
-
-            let capacity = battery.energy_full().value;
-            if capacity.is_finite() && capacity > 0.0 {
-                weighted_charge += charge * capacity;
-                total_capacity += capacity;
-            }
-            unweighted_charge += charge;
-            battery_count += 1;
-
-            match battery.state() {
-                battery::State::Charging => is_charging = true,
-                battery::State::Discharging => is_discharging = true,
-                battery::State::Full => {}
-                _ => all_full = false,
-            }
-        }
-
-        if battery_count == 0 {
+    let mut status = SYSTEM_POWER_STATUS::default();
+    if unsafe { GetSystemPowerStatus(&mut status) }.is_ok() {
+        if status.BatteryFlag == 128 {
             return Err("Tidak ada perangkat baterai yang dapat dibaca".to_string());
         }
-
-        let percentage = if total_capacity > 0.0 {
-            weighted_charge / total_capacity
-        } else {
-            unweighted_charge / battery_count as f32
-        };
-        let state = if is_charging {
-            "Charging"
-        } else if is_discharging {
-            "Discharging"
-        } else if all_full {
-            "Full"
-        } else {
-            "Unknown"
-        };
-
-        Ok(BatteryInfo {
-            percentage: Some(percentage.clamp(0.0, 100.0)),
-            state: state.to_string(),
-        })
-    })();
-
-    let battery_error = match battery_reading {
-        Ok(info) => return Ok(info),
-        Err(error) => error,
-    };
-
-    let mut status = SYSTEM_POWER_STATUS::default();
-    unsafe {
-        if let Err(error) = GetSystemPowerStatus(&mut status) {
-            return Err(format!("{battery_error}; {}", error));
+        if status.BatteryLifePercent <= 100 {
+            let percentage = status.BatteryLifePercent as f32;
+            let state = match status.ACLineStatus {
+                0 => "Discharging",
+                1 if percentage >= 100.0 => "Full",
+                1 => "Charging",
+                _ if status.BatteryFlag & 8 != 0 => "Charging",
+                _ => "Unknown",
+            };
+            return Ok(BatteryInfo {
+                percentage: Some(percentage),
+                state: state.to_string(),
+            });
         }
     }
-    if status.BatteryFlag == 128 || status.BatteryLifePercent == 255 {
-        return Err(battery_error);
+
+    let manager = BatteryManager::new().map_err(|error| error.to_string())?;
+    let mut batteries = manager.batteries().map_err(|error| error.to_string())?;
+    let mut weighted_charge = 0.0_f32;
+    let mut total_capacity = 0.0_f32;
+    let mut unweighted_charge = 0.0_f32;
+    let mut battery_count = 0_u32;
+    let mut is_charging = false;
+    let mut is_discharging = false;
+    let mut all_full = true;
+
+    while let Some(battery_result) = batteries.next() {
+        let Ok(battery) = battery_result else {
+            continue;
+        };
+        let charge = battery.state_of_charge().value * 100.0;
+        if !charge.is_finite() || !(0.0..=100.0).contains(&charge) {
+            continue;
+        }
+
+        let capacity = battery.energy_full().value;
+        if capacity.is_finite() && capacity > 0.0 {
+            weighted_charge += charge * capacity;
+            total_capacity += capacity;
+        }
+        unweighted_charge += charge;
+        battery_count += 1;
+
+        match battery.state() {
+            battery::State::Charging => is_charging = true,
+            battery::State::Discharging => is_discharging = true,
+            battery::State::Full => {}
+            _ => all_full = false,
+        }
     }
 
-    let percentage = status.BatteryLifePercent as f32;
-    let state = match status.ACLineStatus {
-        0 => "Discharging",
-        1 if percentage >= 100.0 => "Full",
-        1 => "Charging",
-        _ if status.BatteryFlag & 8 != 0 => "Charging",
-        _ => "Unknown",
+    if battery_count == 0 {
+        return Err("Tidak ada perangkat baterai yang dapat dibaca".to_string());
+    }
+
+    let percentage = if total_capacity > 0.0 {
+        weighted_charge / total_capacity
+    } else {
+        unweighted_charge / battery_count as f32
     };
+    let state = if is_charging {
+        "Charging"
+    } else if is_discharging {
+        "Discharging"
+    } else if all_full {
+        "Full"
+    } else {
+        "Unknown"
+    };
+
     Ok(BatteryInfo {
-        percentage: Some(percentage),
+        percentage: Some(percentage.clamp(0.0, 100.0)),
         state: state.to_string(),
     })
 }
@@ -1434,60 +1427,104 @@ fn emit_system_notice(app_handle: &tauri::AppHandle, title: &str, body: &str) {
     let _ = app_handle.emit("system-notification", notice);
 }
 
-fn get_audio_mute_state() -> (bool, bool) {
-    unsafe {
-        let _ = CoInitialize(None);
-        let result = (|| {
-            let enumerator: IMMDeviceEnumerator = windows::Win32::System::Com::CoCreateInstance(
-                &MMDeviceEnumerator,
-                None,
-                CLSCTX_ALL,
-            )
-            .ok()?;
+struct MonitorComState {
+    audio_enumerator: Option<IMMDeviceEnumerator>,
+    media_manager: Option<GlobalSystemMediaTransportControlsSessionManager>,
+}
 
-            let read_mute = |flow| {
-                let device = enumerator.GetDefaultAudioEndpoint(flow, eConsole).ok()?;
-                let endpoint: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).ok()?;
-                endpoint.GetMute().ok().map(|muted| muted.as_bool())
+impl MonitorComState {
+    fn new() -> Self {
+        unsafe {
+            let _ = CoInitialize(None);
+        }
+        Self {
+            audio_enumerator: None,
+            media_manager: None,
+        }
+    }
+
+    fn read_audio_state(&mut self) -> (f32, bool, bool) {
+        unsafe {
+            if self.audio_enumerator.is_none() {
+                self.audio_enumerator = windows::Win32::System::Com::CoCreateInstance(
+                    &MMDeviceEnumerator,
+                    None,
+                    CLSCTX_ALL,
+                )
+                .ok();
+            }
+            let Some(enumerator) = self.audio_enumerator.as_ref() else {
+                return (0.0, false, false);
             };
 
-            Some((
-                read_mute(eCapture).unwrap_or(false),
-                read_mute(eRender).unwrap_or(false),
-            ))
-        })();
-        CoUninitialize();
-        result.unwrap_or((false, false))
+            let render_state = enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .ok()
+                .and_then(|device| device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok())
+                .map(|endpoint| {
+                    let volume = endpoint
+                        .GetMasterVolumeLevelScalar()
+                        .ok()
+                        .map(|level| (level * 100.0).round())
+                        .unwrap_or(0.0);
+                    let muted = endpoint
+                        .GetMute()
+                        .ok()
+                        .map(|muted| muted.as_bool())
+                        .unwrap_or(false);
+                    (volume, muted)
+                });
+
+            let mic_muted = enumerator
+                .GetDefaultAudioEndpoint(eCapture, eConsole)
+                .ok()
+                .and_then(|device| device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok())
+                .and_then(|endpoint| endpoint.GetMute().ok().map(|muted| muted.as_bool()))
+                .unwrap_or(false);
+
+            match render_state {
+                Some((volume, output_muted)) => (volume, mic_muted, output_muted),
+                None => {
+                    self.audio_enumerator = None;
+                    (0.0, mic_muted, false)
+                }
+            }
+        }
+    }
+
+    fn read_media_info(&mut self) -> Option<MediaInfo> {
+        if self.media_manager.is_none() {
+            self.media_manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+                .ok()
+                .and_then(|op| op.get().ok());
+        }
+        let manager = self.media_manager.as_ref()?;
+        let session = manager.GetCurrentSession().ok()?;
+        let properties = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
+        let playback_status = session.GetPlaybackInfo().ok()?.PlaybackStatus().ok()?;
+        let timeline = session.GetTimelineProperties().ok()?;
+        let position_seconds = (timeline.Position().ok()?.Duration as f64 / 10_000_000.0).floor();
+        let duration_seconds = (timeline.EndTime().ok()?.Duration as f64 / 10_000_000.0).floor();
+
+        Some(MediaInfo {
+            title: properties.Title().ok()?.to_string(),
+            artist: properties.Artist().ok()?.to_string(),
+            source_app: session.SourceAppUserModelId().ok()?.to_string(),
+            is_playing: playback_status
+                == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing,
+            position_seconds: position_seconds.max(0.0),
+            duration_seconds: duration_seconds.max(position_seconds.max(0.0)),
+        })
     }
 }
 
-fn get_current_media_info() -> Option<MediaInfo> {
-    unsafe {
-        let _ = CoInitialize(None);
-        let result = (|| {
-            let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-                .ok()?
-                .get()
-                .ok()?;
-            let session = manager.GetCurrentSession().ok()?;
-            let properties = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
-            let playback_status = session.GetPlaybackInfo().ok()?.PlaybackStatus().ok()?;
-            let timeline = session.GetTimelineProperties().ok()?;
-            let position_seconds = timeline.Position().ok()?.Duration as f64 / 10_000_000.0;
-            let duration_seconds = timeline.EndTime().ok()?.Duration as f64 / 10_000_000.0;
-
-            Some(MediaInfo {
-                title: properties.Title().ok()?.to_string(),
-                artist: properties.Artist().ok()?.to_string(),
-                source_app: session.SourceAppUserModelId().ok()?.to_string(),
-                is_playing: playback_status
-                    == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing,
-                position_seconds: position_seconds.max(0.0),
-                duration_seconds: duration_seconds.max(position_seconds),
-            })
-        })();
-        CoUninitialize();
-        result
+impl Drop for MonitorComState {
+    fn drop(&mut self) {
+        self.audio_enumerator = None;
+        self.media_manager = None;
+        unsafe {
+            CoUninitialize();
+        }
     }
 }
 
@@ -1547,8 +1584,10 @@ fn get_current_media_artwork() -> Result<Option<String>, String> {
     }
 }
 
-fn get_windows_notifications() -> Result<Vec<WindowsNotification>, String> {
-    let listener = UserNotificationListener::Current().map_err(|error| error.to_string())?;
+fn get_windows_notifications_with(
+    listener: &UserNotificationListener,
+    binding_name: &windows::core::HSTRING,
+) -> Result<Vec<WindowsNotification>, String> {
     if listener
         .GetAccessStatus()
         .map_err(|error| error.to_string())?
@@ -1562,15 +1601,13 @@ fn get_windows_notifications() -> Result<Vec<WindowsNotification>, String> {
         .map_err(|error| error.to_string())?
         .get()
         .map_err(|error| error.to_string())?;
-    let binding_name =
-        KnownNotificationBindings::ToastGeneric().map_err(|error| error.to_string())?;
     let mut result = Vec::new();
 
     for notification in notifications.into_iter() {
         let text_elements = notification
             .Notification()
             .and_then(|content| content.Visual())
-            .and_then(|visual| visual.GetBinding(&binding_name))
+            .and_then(|visual| visual.GetBinding(binding_name))
             .and_then(|binding| binding.GetTextElements())
             .map_err(|error| error.to_string())?;
         let mut text = text_elements
@@ -1635,71 +1672,254 @@ fn start_windows_notification_monitor(app_handle: tauri::AppHandle) {
         unsafe {
             let _ = CoInitialize(None);
         }
+        let Ok(listener) = UserNotificationListener::Current() else {
+            unsafe {
+                CoUninitialize();
+            }
+            return;
+        };
+        let Ok(binding_name) = KnownNotificationBindings::ToastGeneric() else {
+            unsafe {
+                CoUninitialize();
+            }
+            return;
+        };
+
         let mut initialized = false;
         let mut seen_ids = HashSet::new();
         let mut seen_order = VecDeque::new();
 
         loop {
-            if let Ok(notifications) = get_windows_notifications() {
-                if !initialized {
-                    for notification in notifications {
-                        seen_ids.insert(notification.id);
-                        seen_order.push_back(notification.id);
-                    }
-                    initialized = true;
-                } else {
-                    for notification in notifications {
-                        if seen_ids.insert(notification.id) {
-                            let title = if notification.title.is_empty() {
-                                notification.app_name.clone()
-                            } else {
-                                notification.title.clone()
-                            };
-                            let _ = app_handle.emit(
-                                "system-notification",
-                                AutoNotice {
-                                    kind: "notification".to_string(),
-                                    title,
-                                    body: if notification.body.is_empty() {
-                                        notification.app_name
-                                    } else {
-                                        notification.body
-                                    },
-                                },
-                            );
+            let sleep_duration = match get_windows_notifications_with(&listener, &binding_name) {
+                Ok(notifications) => {
+                    if !initialized {
+                        for notification in notifications {
+                            seen_ids.insert(notification.id);
                             seen_order.push_back(notification.id);
                         }
-                    }
+                        initialized = true;
+                    } else {
+                        for notification in notifications {
+                            if seen_ids.insert(notification.id) {
+                                let title = if notification.title.is_empty() {
+                                    notification.app_name.clone()
+                                } else {
+                                    notification.title.clone()
+                                };
+                                let _ = app_handle.emit(
+                                    "system-notification",
+                                    AutoNotice {
+                                        kind: "notification".to_string(),
+                                        title,
+                                        body: if notification.body.is_empty() {
+                                            notification.app_name
+                                        } else {
+                                            notification.body
+                                        },
+                                    },
+                                );
+                                seen_order.push_back(notification.id);
+                            }
+                        }
 
-                    while seen_order.len() > 512 {
-                        if let Some(expired_id) = seen_order.pop_front() {
-                            seen_ids.remove(&expired_id);
+                        while seen_order.len() > 512 {
+                            if let Some(expired_id) = seen_order.pop_front() {
+                                seen_ids.remove(&expired_id);
+                            }
                         }
                     }
+                    Duration::from_secs(3)
                 }
-            }
-            thread::sleep(Duration::from_secs(2));
+                Err(_) => Duration::from_secs(15),
+            };
+            thread::sleep(sleep_duration);
         }
     });
 }
 
-fn get_current_ssid() -> String {
-    if let Ok(output) = Command::new("netsh")
-        .args(["wlan", "show", "interfaces"])
-        .output()
-    {
-        let out_str = String::from_utf8_lossy(&output.stdout);
-        for line in out_str.lines() {
-            if line.trim().starts_with("Profile")
-                || (line.trim().starts_with("SSID") && !line.trim().starts_with("BSSID"))
+#[repr(C)]
+struct WlanInterfaceInfo {
+    interface_guid: [u32; 4],
+    interface_description: [u16; 256],
+    is_state: u32,
+}
+
+#[repr(C)]
+struct WlanInterfaceInfoList {
+    number_of_items: u32,
+    index: u32,
+    interface_info: [WlanInterfaceInfo; 1],
+}
+
+#[repr(C)]
+struct Dot11Ssid {
+    ssid_length: u32,
+    ssid: [u8; 32],
+}
+
+#[repr(C)]
+struct WlanConnectionAttributesPrefix {
+    is_state: u32,
+    wlan_connection_mode: u32,
+    profile_name: [u16; 256],
+    dot11_ssid: Dot11Ssid,
+}
+
+type WlanOpenHandleFn =
+    unsafe extern "system" fn(u32, *mut c_void, *mut u32, *mut *mut c_void) -> u32;
+type WlanCloseHandleFn = unsafe extern "system" fn(*mut c_void, *mut c_void) -> u32;
+type WlanEnumInterfacesFn =
+    unsafe extern "system" fn(*mut c_void, *mut c_void, *mut *mut WlanInterfaceInfoList) -> u32;
+type WlanQueryInterfaceFn = unsafe extern "system" fn(
+    *mut c_void,
+    *const [u32; 4],
+    u32,
+    *mut c_void,
+    *mut u32,
+    *mut *mut c_void,
+    *mut u32,
+) -> u32;
+type WlanFreeMemoryFn = unsafe extern "system" fn(*mut c_void);
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn LoadLibraryA(lp_lib_file_name: *const i8) -> *mut c_void;
+    fn GetProcAddress(h_module: *mut c_void, lp_proc_name: *const i8) -> *mut c_void;
+}
+
+struct WlanApi {
+    open_handle: WlanOpenHandleFn,
+    close_handle: WlanCloseHandleFn,
+    enum_interfaces: WlanEnumInterfacesFn,
+    query_interface: WlanQueryInterfaceFn,
+    free_memory: WlanFreeMemoryFn,
+}
+
+unsafe impl Send for WlanApi {}
+unsafe impl Sync for WlanApi {}
+
+static WLAN_API: OnceLock<Option<WlanApi>> = OnceLock::new();
+
+fn wlan_api() -> Option<&'static WlanApi> {
+    WLAN_API
+        .get_or_init(|| unsafe {
+            let module = LoadLibraryA(c"wlanapi.dll".as_ptr());
+            if module.is_null() {
+                return None;
+            }
+            let open_handle = GetProcAddress(module, c"WlanOpenHandle".as_ptr());
+            let close_handle = GetProcAddress(module, c"WlanCloseHandle".as_ptr());
+            let enum_interfaces = GetProcAddress(module, c"WlanEnumInterfaces".as_ptr());
+            let query_interface = GetProcAddress(module, c"WlanQueryInterface".as_ptr());
+            let free_memory = GetProcAddress(module, c"WlanFreeMemory".as_ptr());
+            if open_handle.is_null()
+                || close_handle.is_null()
+                || enum_interfaces.is_null()
+                || query_interface.is_null()
+                || free_memory.is_null()
             {
-                if let Some(ssid) = line.split(':').nth(1) {
-                    return ssid.trim().to_string();
+                return None;
+            }
+            Some(WlanApi {
+                open_handle: std::mem::transmute::<*mut c_void, WlanOpenHandleFn>(open_handle),
+                close_handle: std::mem::transmute::<*mut c_void, WlanCloseHandleFn>(close_handle),
+                enum_interfaces: std::mem::transmute::<*mut c_void, WlanEnumInterfacesFn>(
+                    enum_interfaces,
+                ),
+                query_interface: std::mem::transmute::<*mut c_void, WlanQueryInterfaceFn>(
+                    query_interface,
+                ),
+                free_memory: std::mem::transmute::<*mut c_void, WlanFreeMemoryFn>(free_memory),
+            })
+        })
+        .as_ref()
+}
+
+fn get_current_ssid() -> String {
+    const WLAN_INTERFACE_STATE_CONNECTED: u32 = 1;
+    const WLAN_INTF_OPCODE_CURRENT_CONNECTION: u32 = 7;
+
+    let Some(api) = wlan_api() else {
+        return String::new();
+    };
+
+    unsafe {
+        let mut negotiated_version = 0_u32;
+        let mut handle: *mut c_void = std::ptr::null_mut();
+        if (api.open_handle)(
+            2,
+            std::ptr::null_mut(),
+            &mut negotiated_version,
+            &mut handle,
+        ) != 0
+            || handle.is_null()
+        {
+            return String::new();
+        }
+
+        let ssid = (|| -> String {
+            let mut list_ptr: *mut WlanInterfaceInfoList = std::ptr::null_mut();
+            if (api.enum_interfaces)(handle, std::ptr::null_mut(), &mut list_ptr) != 0
+                || list_ptr.is_null()
+            {
+                return String::new();
+            }
+
+            let count = (*list_ptr).number_of_items as usize;
+            let first = (*list_ptr).interface_info.as_ptr();
+            let mut found = String::new();
+
+            for index in 0..count {
+                let info = &*first.add(index);
+                if info.is_state != WLAN_INTERFACE_STATE_CONNECTED {
+                    continue;
+                }
+                let mut data_size = 0_u32;
+                let mut data_ptr: *mut c_void = std::ptr::null_mut();
+                let mut opcode_value_type = 0_u32;
+                let status = (api.query_interface)(
+                    handle,
+                    &info.interface_guid,
+                    WLAN_INTF_OPCODE_CURRENT_CONNECTION,
+                    std::ptr::null_mut(),
+                    &mut data_size,
+                    &mut data_ptr,
+                    &mut opcode_value_type,
+                );
+                if status == 0 && !data_ptr.is_null() {
+                    if data_size as usize >= std::mem::size_of::<WlanConnectionAttributesPrefix>() {
+                        let attrs = &*(data_ptr as *const WlanConnectionAttributesPrefix);
+                        let ssid_len = (attrs.dot11_ssid.ssid_length as usize).min(32);
+                        if ssid_len > 0 {
+                            found = String::from_utf8_lossy(&attrs.dot11_ssid.ssid[..ssid_len])
+                                .trim()
+                                .to_string();
+                        }
+                        if found.is_empty() {
+                            let profile_len = attrs
+                                .profile_name
+                                .iter()
+                                .position(|&ch| ch == 0)
+                                .unwrap_or(attrs.profile_name.len());
+                            found = String::from_utf16_lossy(&attrs.profile_name[..profile_len])
+                                .trim()
+                                .to_string();
+                        }
+                    }
+                    (api.free_memory)(data_ptr);
+                    if !found.is_empty() {
+                        break;
+                    }
                 }
             }
-        }
+
+            (api.free_memory)(list_ptr as *mut c_void);
+            found
+        })();
+
+        let _ = (api.close_handle)(handle, std::ptr::null_mut());
+        ssid
     }
-    "".to_string()
 }
 
 #[tauri::command]
@@ -1714,7 +1934,7 @@ fn get_network_info() -> NetworkInfo {
 #[tauri::command]
 fn toggle_wifi(enable: bool) -> Result<(), String> {
     let state = if enable { "enable" } else { "disable" };
-    Command::new("netsh")
+    command_no_window("netsh")
         .args([
             "interface",
             "set",
@@ -1734,7 +1954,7 @@ fn set_power_plan(mode: &str) -> Result<(), String> {
         "performance" => "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
         _ => "381b4222-f694-41f0-9685-ff5bb260df2e",
     };
-    Command::new("powercfg")
+    command_no_window("powercfg")
         .args(["/setactive", guid])
         .spawn()
         .map_err(|e| e.to_string())?;
@@ -1743,7 +1963,7 @@ fn set_power_plan(mode: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn scan_wifi() -> Result<Vec<String>, String> {
-    let output = Command::new("netsh")
+    let output = command_no_window("netsh")
         .args(["wlan", "show", "networks"])
         .output()
         .map_err(|e| e.to_string())?;
@@ -1764,7 +1984,7 @@ fn scan_wifi() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn connect_wifi(ssid: &str) -> Result<(), String> {
-    Command::new("netsh")
+    command_no_window("netsh")
         .args(["wlan", "connect", &format!("name={}", ssid)])
         .spawn()
         .map_err(|e| e.to_string())?;
@@ -1815,39 +2035,23 @@ fn read_memory_usage() -> Result<(u64, u64), String> {
 
 fn start_system_monitor(app_handle: tauri::AppHandle) {
     thread::spawn(move || {
+        let mut com = MonitorComState::new();
         let mut previous_wifi: Option<(bool, String)> = None;
         let mut previous_ac = is_ac_connected();
         let mut low_battery_notified = false;
         let mut full_battery_notified = false;
         let mut previous_cpu_times = None;
-        let mut next_snip_capture_check = Instant::now();
-        loop {
-            if Instant::now() >= next_snip_capture_check {
-                next_snip_capture_check = Instant::now() + Duration::from_millis(250);
-                match pending_snip_capture() {
-                    Ok(true) => match save_pending_snip_capture(&app_handle) {
-                        Ok(Some(path)) => {
-                            if let Err(error) = app_handle.emit("capture-saved", path) {
-                                eprintln!("Gagal memperbarui daftar snip: {error}");
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            eprintln!("Gagal menyimpan snip: {error}");
-                            if let Err(clear_error) = clear_pending_snip_capture() {
-                                eprintln!("Gagal membatalkan snip tertunda: {clear_error}");
-                            }
-                        }
-                    },
-                    Ok(false) => {}
-                    Err(error) => eprintln!("Gagal memeriksa snip tertunda: {error}"),
-                }
-            }
+        let mut last_battery_error: Option<String> = None;
+        let mut last_payload: Option<SysData> = None;
+        let mut cached_network = get_network_info();
+        let mut tick: u64 = 0;
 
+        loop {
             let cpu_usage = match read_cpu_times() {
                 Ok(current) => {
                     let usage = previous_cpu_times
-                        .and_then(|previous| calculate_cpu_usage(previous, current));
+                        .and_then(|previous| calculate_cpu_usage(previous, current))
+                        .map(|value| value.round());
                     previous_cpu_times = Some(current);
                     usage
                 }
@@ -1865,9 +2069,15 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 }
             };
             let (battery, battery_error) = match get_battery_info() {
-                Ok(battery) => (battery, None),
+                Ok(battery) => {
+                    last_battery_error = None;
+                    (battery, None)
+                }
                 Err(error) => {
-                    eprintln!("Gagal membaca status baterai: {error}");
+                    if last_battery_error.as_deref() != Some(error.as_str()) {
+                        eprintln!("Gagal membaca status baterai: {error}");
+                        last_battery_error = Some(error.clone());
+                    }
                     (
                         BatteryInfo {
                             percentage: None,
@@ -1877,9 +2087,11 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                     )
                 }
             };
-            let volume = get_system_volume().unwrap_or(0.0);
-            let network = get_network_info();
-            let (microphone_muted, output_muted) = get_audio_mute_state();
+            let (volume, microphone_muted, output_muted) = com.read_audio_state();
+            if tick > 0 && tick % 5 == 0 {
+                cached_network = get_network_info();
+            }
+            let network = &cached_network;
             let current_ac = is_ac_connected();
 
             if let Some((was_connected, previous_ssid)) = &previous_wifi {
@@ -1945,19 +2157,23 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 battery_error,
                 volume,
                 is_wifi_connected: network.is_connected,
-                active_wifi_name: network.ssid,
+                active_wifi_name: network.ssid.clone(),
                 caps_lock: is_lock_key_on(VK_CAPITAL),
                 num_lock: is_lock_key_on(VK_NUMLOCK),
                 scroll_lock: is_lock_key_on(VK_SCROLL),
                 microphone_muted,
                 output_muted,
-                media: get_current_media_info(),
+                media: com.read_media_info(),
                 cpu_usage,
                 memory_used_bytes,
                 memory_total_bytes,
             };
 
-            app_handle.emit("system-update", payload).unwrap_or(());
+            if last_payload.as_ref() != Some(&payload) {
+                app_handle.emit("system-update", &payload).unwrap_or(());
+                last_payload = Some(payload);
+            }
+            tick = tick.wrapping_add(1);
             thread::sleep(Duration::from_secs(1));
         }
     });
@@ -1969,13 +2185,30 @@ fn start_clipboard_activity_monitor(app_handle: tauri::AppHandle) {
         let mut previous_copy = false;
         let mut previous_cut = false;
         let mut previous_paste = false;
-        let mut previous_brightness_up = false;
-        let mut previous_brightness_down = false;
 
         loop {
             let clipboard_sequence = unsafe { GetClipboardSequenceNumber() };
             if clipboard_sequence != last_clipboard_sequence {
                 last_clipboard_sequence = clipboard_sequence;
+                match pending_snip_capture() {
+                    Ok(true) => match save_pending_snip_capture(&app_handle) {
+                        Ok(Some(path)) => {
+                            if let Err(error) = app_handle.emit("capture-saved", path) {
+                                eprintln!("Gagal memperbarui daftar snip: {error}");
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            eprintln!("Gagal menyimpan snip: {error}");
+                            if let Err(clear_error) = clear_pending_snip_capture() {
+                                eprintln!("Gagal membatalkan snip tertunda: {clear_error}");
+                            }
+                        }
+                    },
+                    Ok(false) => {}
+                    Err(error) => eprintln!("Gagal memeriksa snip tertunda: {error}"),
+                }
+
                 let _ = app_handle.emit("clipboard-activity", "clipboard-updated");
                 if let Some(text) = get_clipboard_text() {
                     if !text.trim().is_empty() {
@@ -1997,8 +2230,6 @@ fn start_clipboard_activity_monitor(app_handle: tauri::AppHandle) {
             let copy_down = control_down && is_key_down(VK_C);
             let cut_down = control_down && is_key_down(VK_X);
             let paste_down = control_down && is_key_down(VK_V);
-            let brightness_up = is_key_down(VIRTUAL_KEY(0xAE));
-            let brightness_down = is_key_down(VIRTUAL_KEY(0xAF));
 
             if copy_down && !previous_copy {
                 let _ = app_handle.emit("clipboard-activity", "copied");
@@ -2007,18 +2238,11 @@ fn start_clipboard_activity_monitor(app_handle: tauri::AppHandle) {
             } else if paste_down && !previous_paste {
                 let _ = app_handle.emit("clipboard-activity", "pasted");
             }
-            if brightness_up && !previous_brightness_up {
-                emit_system_notice(&app_handle, "Brightness up", "Brightness key pressed.");
-            } else if brightness_down && !previous_brightness_down {
-                emit_system_notice(&app_handle, "Brightness down", "Brightness key pressed.");
-            }
 
             previous_copy = copy_down;
             previous_cut = cut_down;
             previous_paste = paste_down;
-            previous_brightness_up = brightness_up;
-            previous_brightness_down = brightness_down;
-            thread::sleep(Duration::from_millis(40));
+            thread::sleep(Duration::from_millis(120));
         }
     });
 }
@@ -2223,11 +2447,25 @@ mod tests {
 
         assert!(!error.contains("SECRET"));
     }
+
+    #[test]
+    fn wlan_ffi_struct_offsets_match_win32_abi() {
+        use super::{WlanConnectionAttributesPrefix, WlanInterfaceInfo};
+        assert_eq!(std::mem::size_of::<WlanInterfaceInfo>(), 532);
+        assert_eq!(
+            std::mem::offset_of!(WlanConnectionAttributesPrefix, profile_name),
+            8
+        );
+        assert_eq!(
+            std::mem::offset_of!(WlanConnectionAttributesPrefix, dot11_ssid),
+            520
+        );
+    }
 }
 
 fn enable_windows_startup(executable: &std::path::Path) -> Result<(), String> {
     let command_value = format!("\"{}\"", executable.display());
-    let output = Command::new("reg.exe")
+    let output = command_no_window("reg.exe")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",

@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 type SettingsMap = Record<string, unknown>;
 
 const settings = new Map<string, unknown>();
+const serializedCache = new Map<string, string>();
+const pendingWrites = new Map<string, { value: unknown; timer: ReturnType<typeof setTimeout> }>();
 let initialized = false;
 let writeQueue: Promise<void> = Promise.resolve();
 
@@ -12,6 +14,29 @@ function parseLegacyValue(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function enqueuePersist(key: string, value: unknown): void {
+  writeQueue = writeQueue
+    .catch(() => undefined)
+    .then(() => invoke('save_app_setting', { key, value }))
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      console.error(`Tidak dapat menyimpan pengaturan ${key}:`, error);
+    });
+}
+
+function flushPendingWrites(): void {
+  pendingWrites.forEach(({ value, timer }, key) => {
+    clearTimeout(timer);
+    enqueuePersist(key, value);
+  });
+  pendingWrites.clear();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushPendingWrites);
+  window.addEventListener('beforeunload', flushPendingWrites);
 }
 
 export async function initializeAppSettings(): Promise<void> {
@@ -30,7 +55,15 @@ export async function initializeAppSettings(): Promise<void> {
 
   const migrated = await invoke<SettingsMap>('migrate_legacy_settings', { legacyPreferences });
   settings.clear();
-  Object.entries(migrated).forEach(([key, value]) => settings.set(key, value));
+  serializedCache.clear();
+  Object.entries(migrated).forEach(([key, value]) => {
+    settings.set(key, value);
+    try {
+      serializedCache.set(key, JSON.stringify(value));
+    } catch {
+      // ignore non-serializable values
+    }
+  });
   legacyKeys.forEach((key) => localStorage.removeItem(key));
   initialized = true;
 }
@@ -46,12 +79,25 @@ export function saveAppSetting(key: string, value: unknown): void {
   if (!initialized) {
     throw new Error('Pengaturan aplikasi belum selesai dimuat.');
   }
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    serialized = undefined;
+  }
+  if (serialized !== undefined && serializedCache.get(key) === serialized) {
+    return;
+  }
   settings.set(key, value);
-  writeQueue = writeQueue
-    .catch(() => undefined)
-    .then(() => invoke('save_app_setting', { key, value }))
-    .then(() => undefined)
-    .catch((error: unknown) => {
-      console.error(`Tidak dapat menyimpan pengaturan ${key}:`, error);
-    });
+  if (serialized !== undefined) {
+    serializedCache.set(key, serialized);
+  }
+
+  const existing = pendingWrites.get(key);
+  if (existing) clearTimeout(existing.timer);
+  const timer = setTimeout(() => {
+    pendingWrites.delete(key);
+    enqueuePersist(key, value);
+  }, 300);
+  pendingWrites.set(key, { value, timer });
 }

@@ -1,8 +1,10 @@
-import { AnimatePresence, motion } from 'framer-motion';
+import { lazy, Suspense } from 'react';
+import { AnimatePresence, m } from 'framer-motion';
 import { AlignLeft, Music2, Pause, Pin, Play, SkipBack, SkipForward, X } from 'lucide-react';
-import LyricsPanel from '../LyricsPanel';
 import { localize, type AppLanguage } from '../i18n';
 import type { MediaInfo, MediaProvider } from '../types';
+
+const LyricsPanel = lazy(() => import('../LyricsPanel'));
 
 interface MediaDetailProps {
   media: MediaInfo;
@@ -29,43 +31,35 @@ export default function MediaDetail({
     : 0;
 
   return (
-    <motion.section
+    <m.section
       key="media-detail"
       className={`media-detail${provider ? ` media-detail--${provider}` : ''}`}
-      initial={{ opacity: 0, x: travelX, y: travelY, scale: 0.99, filter: 'blur(2px)' }}
-      animate={{ opacity: 1, x: 0, y: 0, scale: 1, filter: 'blur(0px)' }}
-      exit={{ opacity: 0, x: travelX, y: travelY, scale: 0.995, filter: 'blur(1px)' }}
+      initial={{ opacity: 0, x: travelX, y: travelY, scale: 0.99 }}
+      animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+      exit={{ opacity: 0, x: travelX, y: travelY, scale: 0.995 }}
       transition={transition}
       aria-label={localize(language, 'Kontrol media', 'Now Playing controls')}
     >
       <div className="media-detail__heading">
-        <motion.span
-          className={`media-detail__art${artwork ? ' media-detail__art--loaded' : ''}`}
-          animate={media.is_playing ? { scale: [1, 1.035, 1], rotate: [0, -2, 2, 0] } : { scale: 1, rotate: 0 }}
-          transition={{ duration: 3, ease: 'easeInOut', repeat: media.is_playing ? Infinity : 0 }}
-        >
+        <span className={`media-detail__art${artwork ? ' media-detail__art--loaded' : ''}${media.is_playing ? ' is-playing' : ''}`}>
           {artwork ? <img src={artwork} alt="" /> : <Music2 size={20} />}
-          <span className="media-detail__equalizer" aria-hidden="true">
-            {[0, 1, 2].map((bar) => (
-              <motion.i
-                key={bar}
-                animate={media.is_playing ? { height: ['4px', '12px', '6px', '10px', '4px'] } : { height: '4px' }}
-                transition={{ duration: 0.9 + bar * 0.17, ease: 'easeInOut', repeat: media.is_playing ? Infinity : 0, delay: bar * 0.12 }}
-              />
-            ))}
+          <span className={`media-detail__equalizer${media.is_playing ? ' is-playing' : ''}`} aria-hidden="true">
+            <i />
+            <i />
+            <i />
           </span>
-        </motion.span>
+        </span>
         <div className="media-detail__copy">
           <AnimatePresence mode="wait" initial={false}>
-            <motion.strong
+            <m.strong
               key={media.title}
-              initial={{ opacity: 0, y: 5, filter: 'blur(2px)' }}
-              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-              exit={{ opacity: 0, y: -4, filter: 'blur(2px)' }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
             >
               {media.title || localize(language, 'Lagu tidak diketahui', 'Unknown track')}
-            </motion.strong>
+            </m.strong>
           </AnimatePresence>
           <small>{media.artist || localize(language, 'Artis tidak diketahui', 'Unknown artist')}</small>
           {provider && <span className="media-detail__provider">{provider === 'spotify' ? 'SPOTIFY' : 'YOUTUBE MUSIC'}</span>}
@@ -105,12 +99,14 @@ export default function MediaDetail({
         <span style={{ width: `${progress}%` }} />
       </div>
       {showLyrics && provider && (
-        <LyricsPanel
-          title={media.title}
-          artist={media.artist}
-          provider={provider}
-          language={language}
-        />
+        <Suspense fallback={null}>
+          <LyricsPanel
+            title={media.title}
+            artist={media.artist}
+            provider={provider}
+            language={language}
+          />
+        </Suspense>
       )}
       <div className="media-detail__controls">
         <button aria-label={localize(language, 'Lagu sebelumnya', 'Previous track')} title={localize(language, 'Lagu sebelumnya', 'Previous track')} onClick={() => onMediaAction('previous')}>
@@ -123,6 +119,6 @@ export default function MediaDetail({
           <SkipForward size={17} />
         </button>
       </div>
-    </motion.section>
+    </m.section>
   );
 }

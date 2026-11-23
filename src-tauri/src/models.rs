@@ -24,6 +24,49 @@ pub(crate) struct ClickUpConfig {
     pub(crate) api_key_configured: bool,
     pub(crate) list_ids: Vec<String>,
     pub(crate) settings_path: String,
+    pub(crate) task_template: ClickUpTaskTemplate,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct ClickUpCustomField {
+    pub(crate) id: String,
+    pub(crate) value: String,
+}
+
+impl Default for ClickUpCustomField {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            value: String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct ClickUpTaskTemplate {
+    pub(crate) team_id: String,
+    pub(crate) status: String,
+    pub(crate) hours_per_day: f32,
+    pub(crate) time_entry_start_minutes_utc: i64,
+    pub(crate) billable: bool,
+    pub(crate) log_time_entry: bool,
+    pub(crate) custom_fields: Vec<ClickUpCustomField>,
+}
+
+impl Default for ClickUpTaskTemplate {
+    fn default() -> Self {
+        Self {
+            team_id: String::new(),
+            status: "COMPLETED".to_string(),
+            hours_per_day: 8.0,
+            time_entry_start_minutes_utc: 300, // 05:00 UTC = 18_000_000 ms
+            billable: true,
+            log_time_entry: true,
+            custom_fields: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -31,6 +74,7 @@ pub(crate) struct ClickUpConfig {
 pub(crate) struct ClickUpSettings {
     pub(crate) api_key: String,
     pub(crate) list_ids: Vec<String>,
+    pub(crate) task_template: ClickUpTaskTemplate,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -44,6 +88,8 @@ pub(crate) struct AppSettings {
     pub(crate) legacy_preferences_migrated: bool,
     #[serde(default)]
     pub(crate) legacy_clickup_migrated: bool,
+    #[serde(default)]
+    pub(crate) clickup_template_migrated: bool,
 }
 
 impl Default for AppSettings {
@@ -73,6 +119,7 @@ impl Default for AppSettings {
             "di-windows-notification-notices".to_string(),
             serde_json::json!(true),
         );
+        preferences.insert("di-launch-at-startup".to_string(), serde_json::json!(true));
         preferences.insert("di-focus-remaining".to_string(), serde_json::json!(1500));
         preferences.insert("di-focus-minutes".to_string(), serde_json::json!(25));
         preferences.insert("di-break-minutes".to_string(), serde_json::json!(5));
@@ -85,6 +132,7 @@ impl Default for AppSettings {
             click_up: ClickUpSettings::default(),
             legacy_preferences_migrated: false,
             legacy_clickup_migrated: false,
+            clickup_template_migrated: false,
         }
     }
 }

@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion';
+import { m } from 'framer-motion';
 import {
   Activity, BatteryCharging, Bell, Clipboard, ClipboardPaste, Copy, Keyboard, Music2, Plug,
   PlugZap, Scissors, Sun, Volume2, VolumeX, Wifi, WifiOff, X
@@ -96,15 +96,15 @@ export default function AutoNoticeCard({
   const brightnessLevel = Number(`${notice.title} ${notice.body}`.match(/\d+(?:\.\d+)?/)?.[0] ?? 65);
 
   return (
-    <motion.div
+    <m.div
       key={`auto-notice-${notice.kind}-${notice.title}-${notice.body}`}
       className={`auto-notice auto-notice--${visual}${provider === 'youtube-music' ? ' auto-notice--youtube-music' : ''}`}
-      initial={{ opacity: 0, x: travelX, y: travelY, scale: 0.985, filter: 'blur(2px)' }}
-      animate={{ opacity: 1, x: 0, y: 0, scale: 1, filter: 'blur(0px)' }}
-      exit={{ opacity: 0, x: travelX, y: travelY, scale: 0.99, filter: 'blur(1px)' }}
+      initial={{ opacity: 0, x: travelX, y: travelY, scale: 0.985 }}
+      animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+      exit={{ opacity: 0, x: travelX, y: travelY, scale: 0.99 }}
       transition={transition}
     >
-      <motion.span
+      <m.span
         className={`auto-notice__icon${artwork && notice.kind === 'media' ? ' auto-notice__icon--art' : ''}`}
         aria-hidden="true"
         animate={visual === 'power'
@@ -121,7 +121,7 @@ export default function AutoNoticeCard({
         transition={{ duration: 0.8, ease: 'easeInOut' }}
       >
         {artwork && notice.kind === 'media' ? <img src={artwork} alt="" /> : getNoticeIcon(notice)}
-      </motion.span>
+      </m.span>
       <div className="auto-notice__content">
         <span className="auto-notice__label">{getNoticeLabel(notice, language)}</span>
         <strong>{notice.kind === 'activity' || notice.kind === 'system' ? localizeActivityText(notice.title, language) : notice.title}</strong>
@@ -130,7 +130,7 @@ export default function AutoNoticeCard({
           : notice.body && <p>{notice.kind === 'activity' || notice.kind === 'system' ? localizeActivityText(notice.body, language) : notice.body}</p>}
         {notice.volumeLevel !== undefined && (
           <div className="notice-meter" role="img" aria-label={`${localize(language, 'Volume', 'Volume')} ${Math.round(notice.volumeLevel)}%`}>
-            <motion.span
+            <m.span
               initial={{ width: `${Math.max(0, Math.min(notice.previousVolumeLevel ?? 0, 100))}%` }}
               animate={{ width: `${Math.max(0, Math.min(notice.volumeLevel, 100))}%` }}
               transition={{ duration: 0.45, ease: 'easeOut' }}
@@ -139,7 +139,7 @@ export default function AutoNoticeCard({
         )}
         {visual === 'brightness' && /\d/.test(`${notice.title} ${notice.body}`) && (
           <div className="notice-meter notice-meter--brightness" aria-hidden="true">
-            <motion.span
+            <m.span
               initial={{ width: '20%' }}
               animate={{ width: `${Math.max(10, Math.min(brightnessLevel, 100))}%` }}
               transition={{ duration: 0.55, ease: 'easeOut' }}
@@ -155,6 +155,6 @@ export default function AutoNoticeCard({
       >
         <X size={15} />
       </button>
-    </motion.div>
+    </m.div>
   );
 }

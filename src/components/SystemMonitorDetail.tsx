@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Activity, Battery, BatteryCharging, Cpu, HardDrive, Pin, Wifi, X } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { m } from 'framer-motion';
 import { localize, type AppLanguage } from '../i18n';
 
 interface SystemMonitorDetailProps {
@@ -69,12 +69,12 @@ export default function SystemMonitorDetail({
   const networkColor = isWifiConnected ? '#65c9a5' : '#8993a0';
 
   return (
-    <motion.section
+    <m.section
       key="system-monitor"
       className="system-monitor-detail"
-      initial={{ opacity: 0, x: travelX, y: travelY, scale: 0.99, filter: 'blur(2px)' }}
-      animate={{ opacity: 1, x: 0, y: 0, scale: 1, filter: 'blur(0px)' }}
-      exit={{ opacity: 0, x: travelX, y: travelY, scale: 0.995, filter: 'blur(1px)' }}
+      initial={{ opacity: 0, x: travelX, y: travelY, scale: 0.99 }}
+      animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+      exit={{ opacity: 0, x: travelX, y: travelY, scale: 0.995 }}
       transition={transition}
       aria-label={localize(language, 'Monitor sistem', 'System monitor')}
     >
@@ -154,6 +154,6 @@ export default function SystemMonitorDetail({
       <footer className="system-monitor__footer">
         {localize(language, 'Diperbarui setiap detik', 'Updates every second')}
       </footer>
-    </motion.section>
+    </m.section>
   );
 }
