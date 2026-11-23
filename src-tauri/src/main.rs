@@ -626,21 +626,75 @@ fn configure_borderless_island_window(window: &tauri::WebviewWindow) -> Result<(
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitorOption {
+    index: usize,
+    name: String,
+    width: u32,
+    height: u32,
+    is_primary: bool,
+}
+
+#[tauri::command]
+fn list_monitors(app: tauri::AppHandle) -> Result<Vec<MonitorOption>, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Jendela utama Dynamic Island tidak ditemukan".to_string())?;
+    let primary_pos = window
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| (m.position().x, m.position().y));
+    let monitors = window
+        .available_monitors()
+        .map_err(|error| error.to_string())?;
+    Ok(monitors
+        .into_iter()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let size = monitor.size();
+            let pos = monitor.position();
+            let is_primary = primary_pos == Some((pos.x, pos.y));
+            let label = monitor
+                .name()
+                .map(|n| n.trim_start_matches(r"\\.\").to_string())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| format!("Monitor {}", index + 1));
+            MonitorOption {
+                index,
+                name: label,
+                width: size.width,
+                height: size.height,
+                is_primary,
+            }
+        })
+        .collect())
+}
+
 fn apply_island_window_bounds(
     window: &tauri::WebviewWindow,
     width: f64,
     height: f64,
     position: u8,
     edge_offset: f64,
+    monitor_index: Option<usize>,
 ) -> Result<(), String> {
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
         return Err("Ukuran jendela Dynamic Island tidak valid".to_string());
     }
 
-    let monitor = window
-        .current_monitor()
-        .map_err(|error| error.to_string())?
+    let selected_monitor = if let Some(idx) = monitor_index {
+        window
+            .available_monitors()
+            .ok()
+            .and_then(|monitors| monitors.into_iter().nth(idx))
+    } else {
+        None
+    };
+    let monitor = selected_monitor
         .or(window.primary_monitor().map_err(|error| error.to_string())?)
+        .or(window.current_monitor().map_err(|error| error.to_string())?)
         .ok_or_else(|| "Monitor utama tidak ditemukan".to_string())?;
     let scale_factor = monitor.scale_factor().max(0.1);
     let monitor_pos = monitor.position();
@@ -689,11 +743,19 @@ fn set_island_window_bounds(
     height: f64,
     position: u8,
     edge_offset: Option<f64>,
+    monitor_index: Option<usize>,
 ) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Jendela utama Dynamic Island tidak ditemukan".to_string())?;
-    apply_island_window_bounds(&window, width, height, position, edge_offset.unwrap_or(0.0))
+    apply_island_window_bounds(
+        &window,
+        width,
+        height,
+        position,
+        edge_offset.unwrap_or(0.0),
+        monitor_index,
+    )
 }
 
 #[tauri::command]
@@ -3006,7 +3068,7 @@ fn main() {
             window.set_always_on_top(true)?;
             window.set_resizable(false)?;
             configure_borderless_island_window(&window).map_err(std::io::Error::other)?;
-            apply_island_window_bounds(&window, 204.0, 38.0, 0, 0.0)
+            apply_island_window_bounds(&window, 204.0, 38.0, 0, 0.0, None)
                 .map_err(std::io::Error::other)?;
 
             let icon = app.default_window_icon().cloned().ok_or_else(|| {
@@ -3059,6 +3121,7 @@ fn main() {
             scan_wifi,
             connect_wifi,
             set_island_window_bounds,
+            list_monitors,
             set_auto_hide_fullscreen,
             lock_windows,
             open_snipping_tool,

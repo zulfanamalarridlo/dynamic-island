@@ -161,6 +161,8 @@ export default function DynamicIsland() {
   const windowsNotificationNoticesRef = useRef(windowsNotificationNotices);
   const notificationAppFiltersRef = useRef(notificationAppFilters);
   const noticeDurationMsRef = useRef(4000);
+  const lastWheelAtRef = useRef(0);
+  const brightnessCacheRef = useRef<number | null>(null);
   const autoNoticeRef = useRef<AutoNotice | null>(null);
   const previousSystemDataRef = useRef<SysData | null>(null);
   const autoNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -746,16 +748,67 @@ export default function DynamicIsland() {
     });
   }, [windhawkSettings.appearance.autoHideFullscreen]);
 
+  const selectedMonitorIndex = windhawkSettings.appearance.monitorIndex >= 0
+    ? windhawkSettings.appearance.monitorIndex
+    : null;
+
   useEffect(() => {
     void invoke('set_island_window_bounds', {
       width: targetWindowWidth,
       height: targetWindowHeight,
       position: islandPosition,
-      edgeOffset
+      edgeOffset,
+      monitorIndex: selectedMonitorIndex
     }).catch((error: unknown) => {
       console.error('Gagal memposisikan jendela Dynamic Island:', error);
     });
-  }, [targetWindowWidth, targetWindowHeight, islandPosition, edgeOffset]);
+  }, [targetWindowWidth, targetWindowHeight, islandPosition, edgeOffset, selectedMonitorIndex]);
+
+  const handleIdleWheel = (event: React.WheelEvent) => {
+    if (!windhawkSettings.appearance.scrollControlEnabled) return;
+    if (event.deltaY === 0) return;
+    const now = Date.now();
+    if (now - lastWheelAtRef.current < 85) return;
+    lastWheelAtRef.current = now;
+    const step = event.deltaY < 0 ? 4 : -4;
+
+    if (event.shiftKey) {
+      const applyBrightness = (base: number) => {
+        const next = Math.max(5, Math.min(100, Math.round(base + step)));
+        brightnessCacheRef.current = next;
+        void invoke('set_display_brightness', { level: next }).catch((error) => {
+          console.warn('Gagal mengatur kecerahan via scroll:', error);
+        });
+        showAutoNotice({
+          kind: 'activity',
+          title: localize(language, 'Kecerahan', 'Brightness'),
+          body: `${next}%`
+        });
+      };
+      if (brightnessCacheRef.current !== null) {
+        applyBrightness(brightnessCacheRef.current);
+      } else {
+        void invoke<number>('get_display_brightness')
+          .then((current) => applyBrightness(current))
+          .catch(() => applyBrightness(65));
+      }
+      return;
+    }
+
+    const previousVolume = Number.isFinite(sysData.volume) ? sysData.volume : 50;
+    const nextVolume = Math.max(0, Math.min(100, Math.round(previousVolume + step)));
+    setSysData((current) => ({ ...current, volume: nextVolume }));
+    void invoke('set_system_volume', { level: nextVolume }).catch((error) => {
+      console.warn('Gagal mengatur volume via scroll:', error);
+    });
+    showAutoNotice({
+      kind: 'activity',
+      title: 'Windows Activity',
+      body: `Volume ${nextVolume}%`,
+      volumeLevel: nextVolume,
+      previousVolumeLevel: previousVolume
+    });
+  };
 
   const hasTextColorOverride = Boolean(windhawkSettings.themes.textColorOverride.trim());
   const hasGradientBg = windhawkSettings.themes.bgGradientEnabled;
@@ -829,6 +882,7 @@ export default function DynamicIsland() {
             <m.div
               key="idle"
               className={`island-idle${isSidePosition ? ' island-idle--side' : ' island-idle--top'}${hasPinnedIdleContent ? ' island-idle--pinned' : ''}`}
+              onWheel={handleIdleWheel}
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.99 }}

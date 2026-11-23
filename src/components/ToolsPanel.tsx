@@ -27,6 +27,14 @@ interface ClickUpTask {
   due_date?: string | null;
 }
 
+interface MonitorOption {
+  index: number;
+  name: string;
+  width: number;
+  height: number;
+  isPrimary: boolean;
+}
+
 interface ClickUpConfig {
   api_key_configured: boolean;
   list_ids: string[];
@@ -328,6 +336,14 @@ export default function ToolsPanel({
   const [newProfileName, setNewProfileName] = useState('');
   const [importJsonText, setImportJsonText] = useState('');
   const [showImportJson, setShowImportJson] = useState(false);
+  const [monitors, setMonitors] = useState<MonitorOption[]>([]);
+
+  useEffect(() => {
+    if (tab !== 'settings') return;
+    void invoke<MonitorOption[]>('list_monitors')
+      .then((list) => setMonitors(list))
+      .catch(() => {});
+  }, [tab]);
 
   const resolvedNavLayout = layoutSettings.toolsNavLayout === 'auto'
     ? (islandPosition === 0 ? 'top' : islandPosition === 1 ? 'left' : 'right')
@@ -1128,6 +1144,44 @@ export default function ToolsPanel({
                       <small className="settings-range-value">
                         {Math.min(48, Math.max(0, windhawkSettings.appearance.edgeOffset))}px
                       </small>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>Monitor</span>
+                      <select
+                        value={windhawkSettings.appearance.monitorIndex}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, monitorIndex: Number(event.target.value) }
+                        })}
+                      >
+                        <option value={-1}>{localize(language, 'Utama (Auto)', 'Primary (Auto)')}</option>
+                        {monitors.map((monitor) => (
+                          <option key={monitor.index} value={monitor.index}>
+                            {`${monitor.name} (${monitor.width}×${monitor.height})${monitor.isPrimary ? ' ★' : ''}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-inline-row">
+                      <span className="settings-section-title">
+                        <strong>{localize(language, 'Scroll volume & cahaya', 'Scroll volume & brightness')}</strong>
+                        <small>{localize(language, 'Scroll di idle: volume · Shift+Scroll: cahaya', 'Scroll on idle: volume · Shift+Scroll: brightness')}</small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={windhawkSettings.appearance.scrollControlEnabled}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, scrollControlEnabled: event.target.checked }
+                        })}
+                      />
                     </label>
                   </section>
 

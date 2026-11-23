@@ -16,6 +16,8 @@ export const WINDHAWK_SETTINGS_DEFAULTS = {
     customPetImage: '',
     petIdleMinutes: 10,
     edgeOffset: 0,
+    monitorIndex: -1,
+    scrollControlEnabled: true,
     autoHideFullscreen: true,
     clockFormat: '24h',
     showSeconds: false,
@@ -50,6 +52,8 @@ export type WindhawkSettings = {
     customPetImage: string;
     petIdleMinutes: number;
     edgeOffset: number;
+    monitorIndex: number;
+    scrollControlEnabled: boolean;
     autoHideFullscreen: boolean;
     clockFormat: ClockFormat;
     showSeconds: boolean;
