@@ -3,11 +3,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimatePresence, domAnimation, LazyMotion, m } from 'framer-motion';
-import { Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, Mic, Music2, Wifi } from 'lucide-react';
+import { Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, LayoutGrid, Mic, Music2, Wifi } from 'lucide-react';
 import ToolsPanel, { type ClipboardItem } from './components/ToolsPanel';
 import { localize, readAppLanguage, type AppLanguage } from './lib/i18n';
 import { readAppSetting, saveAppSetting } from './lib/storage';
 import { readWindhawkSettings, saveWindhawkSettings } from './lib/appearanceSettings';
+import { readLayoutSettings, saveLayoutSettings, type ToolTabId } from './lib/layoutSettings';
 import { getMediaProvider } from './lib/media';
 import AutoNoticeCard from './components/AutoNoticeCard';
 import IslandPet from './components/IslandPet';
@@ -128,7 +129,9 @@ export default function DynamicIsland() {
   const [islandMode, setIslandMode] = useState<IslandMode>('idle');
   const [islandPosition, setIslandPosition] = useState<IslandPosition>(readIslandPosition);
   const [windhawkSettings, setWindhawkSettings] = useState(readWindhawkSettings);
+  const [layoutSettings, setLayoutSettings] = useState(readLayoutSettings);
   const [openSettingsRequest, setOpenSettingsRequest] = useState(0);
+  const [openTabRequest, setOpenTabRequest] = useState<{ tab: ToolTabId; seq: number } | null>(null);
   const [viewport, setViewport] = useState(() => ({
     width: window.screen.width,
     height: window.screen.height
@@ -208,6 +211,7 @@ export default function DynamicIsland() {
 
   useEffect(() => saveAppSetting('di-language', language), [language]);
   useEffect(() => saveWindhawkSettings(windhawkSettings), [windhawkSettings]);
+  useEffect(() => saveLayoutSettings(layoutSettings), [layoutSettings]);
   useEffect(() => saveAppSetting('di-pin-media', mediaPinned), [mediaPinned]);
   useEffect(() => saveAppSetting('di-pin-monitor', monitorPinned), [monitorPinned]);
 
@@ -561,6 +565,16 @@ export default function DynamicIsland() {
     }
   };
 
+  const openToolsTab = (targetTab: ToolTabId) => {
+    if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+    autoNoticeTimer.current = null;
+    if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
+    closeDelayTimer.current = null;
+    islandModeRef.current = 'tools';
+    setIslandMode('tools');
+    setOpenTabRequest((current) => ({ tab: targetTab, seq: (current?.seq ?? 0) + 1 }));
+  };
+
   const openSnippingTool = () => runCaptureAction('open_snipping_tool', 'Gagal membuka Snipping Tool');
   const takeScreenshot = () => runCaptureAction('take_screenshot', 'Gagal mengambil screenshot');
 
@@ -597,17 +611,28 @@ export default function DynamicIsland() {
   const topPanelWidth = Math.max(0, Math.min(customPanelWidth, viewport.width - 24));
   const sideWidth = Math.max(0, Math.min(Math.round(customPanelWidth * 0.7), Math.max(210, viewport.width * 0.22), viewport.width - 24));
   const sideHeight = Math.max(0, Math.min(Math.round(customPanelHeight * 1.22), viewport.height - 24));
-  const sideLauncherHeight = Math.min(232, sideHeight);
   const hasPinnedIdleContent = mediaPinned || monitorPinned;
-  const hasPet = windhawkSettings.appearance.petStyle !== 'none';
-  const hasPrivacyAlert = Boolean(sysData.cameraActive || sysData.micInUse);
+  const isIdleVisible = (id: 'pet' | 'privacy' | 'live' | 'clock' | 'date' | 'battery') =>
+    layoutSettings.idleWidgets.some((widget) => widget.id === id && widget.visible);
+  const showClock = isIdleVisible('clock');
+  const showDate = isIdleVisible('date');
+  const showBattery = isIdleVisible('battery');
+  const showPetWidget = isIdleVisible('pet') && windhawkSettings.appearance.petStyle !== 'none';
+  const hasPrivacyAlert = isIdleVisible('privacy') && Boolean(sysData.cameraActive || sysData.micInUse);
   const privacyExtraWidth = hasPrivacyAlert ? (sysData.cameraActive && sysData.micInUse ? 34 : 20) : 0;
-  const liveExtraWidth = (sysData.activeDownload ? 56 : 0) + (sysData.bluetoothDevice ? 46 : 0);
+  const liveExtraWidth = isIdleVisible('live')
+    ? (sysData.activeDownload ? 56 : 0) + (sysData.bluetoothDevice ? 46 : 0)
+    : 0;
+  const visibleLauncherCount = Math.max(1, layoutSettings.launcherItems.filter((item) => item.visible).length);
+  const launcherRows = Math.ceil(visibleLauncherCount / Math.min(layoutSettings.launcherColumns, visibleLauncherCount));
+  const topLauncherHeight = launcherRows * 48 + 14;
+  const dynamicSideLauncherHeight = Math.min(sideHeight, Math.max(110, visibleLauncherCount * 48 + 18));
+  const baseIdleWidth = (showClock ? 72 : 0) + (showDate ? 64 : 0) + (showBattery ? 58 : 0) + (showPetWidget ? 30 : 0) + (!showClock && !showDate ? 34 : 0) + 18;
   const idleWidth = isSidePosition
     ? Math.min(sideWidth, hasPinnedIdleContent ? 216 : 60)
     : Math.min(topPanelWidth, (hasPinnedIdleContent
       ? mediaPinned && monitorPinned ? 388 : mediaPinned ? 276 : 332
-      : hasPet ? 228 : 204) + privacyExtraWidth + liveExtraWidth);
+      : Math.max(96, baseIdleWidth)) + privacyExtraWidth + liveExtraWidth);
   const idleHeight = isSidePosition
     ? monitorPinned ? mediaPinned ? Math.min(236, sideHeight) : Math.min(186, sideHeight) : mediaPinned ? 116 : 118
     : monitorPinned ? 46 : mediaPinned ? 44 : 38;
@@ -626,8 +651,8 @@ export default function DynamicIsland() {
       borderBottomRightRadius: !isFloatingFromEdge && islandPosition === 2 ? 0 : 12,
     },
     launcher: {
-      width: isSidePosition ? Math.min(212, sideWidth) : Math.min(340, topPanelWidth),
-      height: isSidePosition ? sideLauncherHeight : 62,
+      width: isSidePosition ? Math.min(212, sideWidth) : Math.min(348, topPanelWidth),
+      height: isSidePosition ? dynamicSideLauncherHeight : topLauncherHeight,
       borderRadius: 14,
     },
     autoNotice: {
@@ -758,69 +783,144 @@ export default function DynamicIsland() {
               exit={{ opacity: 0, scale: 0.99 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             >
-              <IslandPet
-                style={windhawkSettings.appearance.petStyle}
-                isPlaying={Boolean(sysData.media?.is_playing)}
-                isCharging={sysData.batteryState === 'Charging'}
-                pcIdleSeconds={sysData.pcIdleSeconds ?? 0}
-                idleThresholdMinutes={windhawkSettings.appearance.petIdleMinutes}
-              />
-              {hasPrivacyAlert && (
-                <span className="idle-privacy" aria-label={localize(language, 'Indikator privasi kamera dan mikrofon', 'Camera and microphone privacy indicator')}>
-                  {sysData.cameraActive && (
-                    <span
-                      className="idle-privacy__badge idle-privacy__badge--camera"
-                      title={localize(language, `Kamera aktif: ${sysData.cameraApp ?? 'Aplikasi'}`, `Camera in use: ${sysData.cameraApp ?? 'App'}`)}
+              {(() => {
+                let clockRendered = false;
+                const renderClockButton = (key: string) => {
+                  if (clockRendered) return null;
+                  clockRendered = true;
+                  return (
+                    <button
+                      key={key}
+                      className="idle-clock"
+                      aria-label={localize(language, 'Buka menu', 'Open menu')}
+                      title={localize(language, 'Buka menu', 'Open menu')}
+                      onClick={openLauncher}
                     >
-                      <Camera size={11} />
-                    </span>
-                  )}
-                  {sysData.micInUse && (
-                    <span
-                      className="idle-privacy__badge idle-privacy__badge--mic"
-                      title={localize(language, `Mikrofon aktif: ${sysData.micApp ?? 'Aplikasi'}`, `Mic in use: ${sysData.micApp ?? 'App'}`)}
-                    >
-                      <Mic size={11} />
-                    </span>
-                  )}
-                </span>
-              )}
-              {sysData.activeDownload && (
-                <span
-                  className="idle-live-pill idle-live-pill--download"
-                  title={`${localize(language, 'Mengunduh', 'Downloading')}: ${sysData.activeDownload.fileName}`}
-                >
-                  <Download size={10} />
-                  <span>{(sysData.activeDownload.sizeBytes / (1024 * 1024)).toFixed(1)}M</span>
-                </span>
-              )}
-              {sysData.bluetoothDevice && (
-                <span
-                  className="idle-live-pill idle-live-pill--bt"
-                  title={`${sysData.bluetoothDevice.name} (${sysData.bluetoothDevice.battery}%)`}
-                >
-                  <Bluetooth size={10} />
-                  <span>{sysData.bluetoothDevice.battery}%</span>
-                </span>
-              )}
-              <button
-                className="idle-clock"
-                aria-label={localize(language, 'Buka menu', 'Open menu')}
-                title={localize(language, 'Buka menu', 'Open menu')}
-                onClick={openLauncher}
-              >
-                <span className={`idle-clock__time${isSidePosition ? ' idle-clock__time--vertical' : ''}`}>
-                  {isSidePosition
-                    ? (
-                      <>
-                        <span>{String(time.getHours()).padStart(2, '0')}</span>
-                        <span>{String(time.getMinutes()).padStart(2, '0')}</span>
-                      </>
-                    )
-                    : formattedTime.replace('.', ':')}
-                </span>
-                <span className="idle-clock__date">{formattedDate}</span>
-              </button>
+                      {showClock && (
+                        <span className={`idle-clock__time${isSidePosition ? ' idle-clock__time--vertical' : ''}`}>
+                          {isSidePosition
+                            ? (
+                              <>
+                                <span>{String(time.getHours()).padStart(2, '0')}</span>
+                                <span>{String(time.getMinutes()).padStart(2, '0')}</span>
+                              </>
+                            )
+                            : formattedTime.replace('.', ':')}
+                        </span>
+                      )}
+                      {showDate && <span className="idle-clock__date">{formattedDate}</span>}
+                    </button>
+                  );
+                };
+
+                const nodes = layoutSettings.idleWidgets.map((widget) => {
+                  if (!widget.visible) return null;
+                  if (widget.id === 'pet') {
+                    return (
+                      <IslandPet
+                        key="pet"
+                        style={windhawkSettings.appearance.petStyle}
+                        isPlaying={Boolean(sysData.media?.is_playing)}
+                        isCharging={sysData.batteryState === 'Charging'}
+                        pcIdleSeconds={sysData.pcIdleSeconds ?? 0}
+                        idleThresholdMinutes={windhawkSettings.appearance.petIdleMinutes}
+                      />
+                    );
+                  }
+                  if (widget.id === 'privacy' && hasPrivacyAlert) {
+                    return (
+                      <span key="privacy" className="idle-privacy" aria-label={localize(language, 'Indikator privasi kamera dan mikrofon', 'Camera and microphone privacy indicator')}>
+                        {sysData.cameraActive && (
+                          <span
+                            className="idle-privacy__badge idle-privacy__badge--camera"
+                            title={localize(language, `Kamera aktif: ${sysData.cameraApp ?? 'Aplikasi'}`, `Camera in use: ${sysData.cameraApp ?? 'App'}`)}
+                          >
+                            <Camera size={11} />
+                          </span>
+                        )}
+                        {sysData.micInUse && (
+                          <span
+                            className="idle-privacy__badge idle-privacy__badge--mic"
+                            title={localize(language, `Mikrofon aktif: ${sysData.micApp ?? 'Aplikasi'}`, `Mic in use: ${sysData.micApp ?? 'App'}`)}
+                          >
+                            <Mic size={11} />
+                          </span>
+                        )}
+                      </span>
+                    );
+                  }
+                  if (widget.id === 'live' && (sysData.activeDownload || sysData.bluetoothDevice)) {
+                    return (
+                      <span key="live" className="idle-live-group">
+                        {sysData.activeDownload && (
+                          <span
+                            className="idle-live-pill idle-live-pill--download"
+                            title={`${localize(language, 'Mengunduh', 'Downloading')}: ${sysData.activeDownload.fileName}`}
+                          >
+                            <Download size={10} />
+                            <span>{(sysData.activeDownload.sizeBytes / (1024 * 1024)).toFixed(1)}M</span>
+                          </span>
+                        )}
+                        {sysData.bluetoothDevice && (
+                          <span
+                            className="idle-live-pill idle-live-pill--bt"
+                            title={`${sysData.bluetoothDevice.name} (${sysData.bluetoothDevice.battery}%)`}
+                          >
+                            <Bluetooth size={10} />
+                            <span>{sysData.bluetoothDevice.battery}%</span>
+                          </span>
+                        )}
+                      </span>
+                    );
+                  }
+                  if (widget.id === 'clock' || widget.id === 'date') {
+                    return renderClockButton(widget.id);
+                  }
+                  if (widget.id === 'battery' && !monitorPinned) {
+                    return (
+                      <button
+                        key="battery"
+                        type="button"
+                        className="idle-battery"
+                        aria-label={localize(language, 'Buka monitor sistem', 'Open system monitor')}
+                        onClick={openSystemMonitor}
+                        style={{ '--battery-color': batteryColor, '--battery-level': `${batteryLevel / 100}` } as CSSProperties}
+                        title={sysData.batteryError ?? `${localize(language, 'Baterai', 'Battery')} ${batteryAvailable ? `${Math.round(batteryLevel)}%` : 'N/A'}`}
+                      >
+                        <span className="idle-battery__icon" aria-hidden="true">
+                          {sysData.batteryState === 'Charging' ? (
+                            <BatteryCharging size={16} />
+                          ) : (
+                            <>
+                              <Battery size={16} />
+                              <span />
+                            </>
+                          )}
+                        </span>
+                        <span className="idle-battery__percent">{batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}</span>
+                      </button>
+                    );
+                  }
+                  return null;
+                });
+
+                return (
+                  <>
+                    {!showClock && !showDate && (
+                      <button
+                        type="button"
+                        className="idle-clock"
+                        aria-label={localize(language, 'Buka menu', 'Open menu')}
+                        title={localize(language, 'Buka menu', 'Open menu')}
+                        onClick={openLauncher}
+                      >
+                        <LayoutGrid size={14} />
+                      </button>
+                    )}
+                    {nodes}
+                  </>
+                );
+              })()}
               {mediaPinned && (
                 <button
                   type="button"
@@ -843,7 +943,7 @@ export default function DynamicIsland() {
                   )}
                 </button>
               )}
-              {monitorPinned ? (
+              {monitorPinned && (
                 <button
                   type="button"
                   className="idle-monitor-card"
@@ -880,19 +980,6 @@ export default function DynamicIsland() {
                     </strong>
                   </span>
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  className="idle-battery"
-                  aria-label={localize(language, 'Buka monitor sistem', 'Open system monitor')}
-                  onClick={openSystemMonitor}
-                  style={{ color: batteryColor }}
-                >
-                  <span className="idle-battery__icon">
-                    {sysData.batteryState === 'Charging' ? <BatteryCharging size={15} /> : <Battery size={15} />}
-                  </span>
-                  <span className="idle-battery__percent">{batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}</span>
-                </button>
               )}
             </m.div>
           )}
@@ -902,12 +989,17 @@ export default function DynamicIsland() {
               language={language}
               media={sysData.media}
               artwork={mediaArtwork}
+              items={layoutSettings.launcherItems}
+              columns={layoutSettings.launcherColumns}
+              isSidePosition={isSidePosition}
               travelX={sideTravel}
               travelY={verticalTravel}
               transition={panelTransition}
               onOpenTools={openTools}
               onOpenMedia={openMediaDetail}
               onOpenSystemMonitor={openSystemMonitor}
+              onOpenAi={() => openToolsTab('ai')}
+              onOpenCapture={() => openToolsTab('capture')}
               onLock={() => { void lockWindows(); }}
             />
           )}
@@ -993,7 +1085,10 @@ export default function DynamicIsland() {
             onIslandPositionChange={setIslandPosition}
             windhawkSettings={windhawkSettings}
             onWindhawkSettingsChange={setWindhawkSettings}
+            layoutSettings={layoutSettings}
+            onLayoutSettingsChange={setLayoutSettings}
             openSettingsRequest={openSettingsRequest}
+            openTabRequest={openTabRequest}
           />
         </m.div>
       </div>

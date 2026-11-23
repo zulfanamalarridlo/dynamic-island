@@ -4,13 +4,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, m } from 'framer-motion';
 import {
-  Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, File, KeyRound, ListTodo,
+  Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, File, KeyRound, LayoutTemplate, ListTodo,
   LocateFixed, Palette, Pause, Play, Plus, RotateCcw, ScanText, Scissors, Settings, Smile, Sparkles, X
 } from 'lucide-react';
 import AiChatTab from './AiChatTab';
+import LayoutEditor from './LayoutEditor';
 import { localize, type AppLanguage } from '../lib/i18n';
 import { readAppSetting, saveAppSetting } from '../lib/storage';
 import type { IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
+import type { IslandLayoutSettings, ToolTabId } from '../lib/layoutSettings';
 
 export interface ClipboardItem {
   text: string;
@@ -108,7 +110,10 @@ interface ToolsPanelProps {
   onIslandPositionChange: (position: IslandPosition) => void;
   windhawkSettings: WindhawkSettings;
   onWindhawkSettingsChange: (settings: WindhawkSettings) => void;
+  layoutSettings: IslandLayoutSettings;
+  onLayoutSettingsChange: (layout: IslandLayoutSettings) => void;
   openSettingsRequest: number;
+  openTabRequest: { tab: ToolTabId; seq: number } | null;
 }
 
 type ToolTab = 'focus' | 'tasks' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
@@ -310,7 +315,8 @@ export default function ToolsPanel({
   notificationAppFilters, onActivityModuleSettingsChange, onWindowsNotificationNoticesChange,
   onNotificationAppFiltersChange, onClose, onReturnToMenu, onClearClipboard,
   onRemoveShelfItem, onCopyClipboard, onNotice, onCapture, onScreenshot,
-  islandPosition, onIslandPositionChange, windhawkSettings, onWindhawkSettingsChange, openSettingsRequest
+  islandPosition, onIslandPositionChange, windhawkSettings, onWindhawkSettingsChange,
+  layoutSettings, onLayoutSettingsChange, openSettingsRequest, openTabRequest
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolTab>('focus');
   const [capturePaths, setCapturePaths] = useState<string[]>([]);
@@ -318,10 +324,14 @@ export default function ToolsPanel({
   const [ocrText, setOcrText] = useState<string | null>(null);
   const [newNotifApp, setNewNotifApp] = useState('');
 
-  const isVerticalLayout = islandPosition !== 0;
+  const resolvedNavLayout = layoutSettings.toolsNavLayout === 'auto'
+    ? (islandPosition === 0 ? 'top' : islandPosition === 1 ? 'left' : 'right')
+    : layoutSettings.toolsNavLayout;
+  const isVerticalLayout = resolvedNavLayout === 'left' || resolvedNavLayout === 'right';
   const [expandedSettings, setExpandedSettings] = useState({
     general: false,
     theme: false,
+    layout: false,
     pet: false,
     activity: false,
     notifications: false,
@@ -719,27 +729,50 @@ export default function ToolsPanel({
     }
   };
 
+  useEffect(() => {
+    if (openTabRequest) {
+      setTab(openTabRequest.tab);
+    }
+  }, [openTabRequest]);
+
+  const visibleTabs = layoutSettings.toolsTabs
+    .filter((entry) => entry.visible || entry.id === 'settings')
+    .map((entry) => TABS.find((t) => t.id === entry.id))
+    .filter((item): item is { id: ToolTab; label: string } => Boolean(item));
+
+  useEffect(() => {
+    if (!visibleTabs.some((item) => item.id === tab)) {
+      setTab(visibleTabs[0]?.id ?? 'settings');
+    }
+  }, [visibleTabs, tab]);
+
   const tabsIcon: Record<ToolTab, ReactNode> = {
     focus: <AlarmClock size={15} />, tasks: <ListTodo size={15} />, ai: <Sparkles size={15} />, clipboard: <Clipboard size={15} />,
     shelf: <File size={15} />, prayer: <span>☾</span>, capture: <Camera size={15} />, settings: <Settings size={15} />
   };
 
   return (
-    <section className={`tools-panel${isVerticalLayout ? ' tools-panel--side' : ''}`} aria-label={localize(language, 'Alat Dynamic Island', 'Dynamic Island tools')}>
+    <section
+      className={`tools-panel${isVerticalLayout ? ' tools-panel--side' : ''}${resolvedNavLayout === 'right' ? ' tools-panel--nav-right' : ''}${layoutSettings.toolsTabLabels ? ' tools-panel--with-labels' : ''}`}
+      aria-label={localize(language, 'Alat Dynamic Island', 'Dynamic Island tools')}
+    >
       <header className="tools-header">
         <button className="tools-back" aria-label={localize(language, 'Kembali ke menu', 'Back to menu')} onClick={onReturnToMenu}><ArrowLeft size={15} /></button>
         <button className="tools-close" aria-label={localize(language, 'Tutup menu', 'Close menu')} onClick={onClose}><X size={15} /></button>
       </header>
       <nav className="tools-tabs" aria-label={localize(language, 'Alat', 'Tools')}>
-        {TABS.map((item) => (
+        {visibleTabs.map((item) => (
           <button
             key={item.id}
-            aria-label={item.id === 'settings' ? localize(language, 'Pengaturan', 'Settings') : item.id === 'focus' ? localize(language, 'Fokus', 'Focus') : item.id === 'tasks' ? 'To-do' : item.id === 'clipboard' ? 'Clipboard' : item.id === 'shelf' ? 'Shelf' : item.id === 'prayer' ? localize(language, 'Salat', 'Prayer') : localize(language, 'Tangkapan layar', 'Capture')}
+            aria-label={item.id === 'settings' ? localize(language, 'Pengaturan', 'Settings') : item.id === 'focus' ? localize(language, 'Fokus', 'Focus') : item.id === 'tasks' ? 'To-do' : item.id === 'ai' ? 'AI Chat' : item.id === 'clipboard' ? 'Clipboard' : item.id === 'shelf' ? 'Shelf' : item.id === 'prayer' ? localize(language, 'Salat', 'Prayer') : localize(language, 'Tangkapan layar', 'Capture')}
             aria-current={tab === item.id ? 'page' : undefined}
             className={tab === item.id ? 'tools-tab is-active' : 'tools-tab'}
             onClick={() => setTab(item.id)}
           >
             <span className="tools-tab__icon">{tabsIcon[item.id]}</span>
+            {layoutSettings.toolsTabLabels && !isVerticalLayout && (
+              <span className="tools-tab__label">{item.label}</span>
+            )}
           </button>
         ))}
       </nav>
@@ -1375,6 +1408,35 @@ export default function ToolsPanel({
                       <small className="settings-range-value">{Math.min(520, Math.max(240, windhawkSettings.appearance.panelHeight))}px</small>
                     </label>
                   </section>
+                </div>
+              )}
+            </section>
+
+            <section className="settings-section settings-section--layout">
+              <button
+                className="settings-section-toggle"
+                type="button"
+                aria-expanded={expandedSettings.layout}
+                aria-controls="settings-layout-content"
+                onClick={() => setExpandedSettings((current) => ({ ...current, layout: !current.layout }))}
+              >
+                <span className="settings-section-icon"><LayoutTemplate size={13} /></span>
+                <span className="settings-section-title">
+                  <strong>{localize(language, 'Layout Builder', 'Layout Builder')}</strong>
+                  <small>{localize(language, 'Susun ulang Idle, Launcher & Tabs', 'Customize Idle, Launcher & Tabs')}</small>
+                </span>
+                <span className="settings-enabled-count">
+                  {layoutSettings.preset}
+                </span>
+                <ChevronRight className="settings-section-chevron" size={14} />
+              </button>
+              {expandedSettings.layout && (
+                <div className="settings-section-content" id="settings-layout-content">
+                  <LayoutEditor
+                    language={language}
+                    layout={layoutSettings}
+                    onChange={onLayoutSettingsChange}
+                  />
                 </div>
               )}
             </section>
