@@ -565,25 +565,30 @@ fn calculate_island_window_rect(
     width: i32,
     height: i32,
     position: u8,
+    edge_offset: i32,
 ) -> (i32, i32, i32, i32) {
     let clamped_width = width.clamp(1, monitor_width.max(1));
     let clamped_height = height.clamp(1, monitor_height.max(1));
+    let max_x_offset = (monitor_width - clamped_width).max(0);
+    let max_y_offset = (monitor_height - clamped_height).max(0);
+    let safe_x_offset = edge_offset.clamp(0, max_x_offset);
+    let safe_y_offset = edge_offset.clamp(0, max_y_offset);
     match position {
         1 => (
-            monitor_x,
+            monitor_x + safe_x_offset,
             monitor_y + ((monitor_height - clamped_height).max(0) / 2),
             clamped_width,
             clamped_height,
         ),
         2 => (
-            monitor_x + (monitor_width - clamped_width).max(0),
+            monitor_x + (monitor_width - clamped_width - safe_x_offset).max(0),
             monitor_y + ((monitor_height - clamped_height).max(0) / 2),
             clamped_width,
             clamped_height,
         ),
         _ => (
             monitor_x + ((monitor_width - clamped_width).max(0) / 2),
-            monitor_y,
+            monitor_y + safe_y_offset,
             clamped_width,
             clamped_height,
         ),
@@ -623,6 +628,7 @@ fn apply_island_window_bounds(
     width: f64,
     height: f64,
     position: u8,
+    edge_offset: f64,
 ) -> Result<(), String> {
     if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
         return Err("Ukuran jendela Dynamic Island tidak valid".to_string());
@@ -638,6 +644,11 @@ fn apply_island_window_bounds(
     let monitor_size = monitor.size();
     let phys_width = (width * scale_factor).ceil() as i32;
     let phys_height = (height * scale_factor).ceil() as i32;
+    let phys_offset = if edge_offset.is_finite() {
+        (edge_offset.clamp(0.0, 64.0) * scale_factor).round() as i32
+    } else {
+        0
+    };
     let (x, y, w, h) = calculate_island_window_rect(
         monitor_pos.x,
         monitor_pos.y,
@@ -646,6 +657,7 @@ fn apply_island_window_bounds(
         phys_width,
         phys_height,
         position,
+        phys_offset,
     );
 
     let hwnd = window
@@ -673,11 +685,12 @@ fn set_island_window_bounds(
     width: f64,
     height: f64,
     position: u8,
+    edge_offset: Option<f64>,
 ) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Jendela utama Dynamic Island tidak ditemukan".to_string())?;
-    apply_island_window_bounds(&window, width, height, position)
+    apply_island_window_bounds(&window, width, height, position, edge_offset.unwrap_or(0.0))
 }
 
 #[tauri::command]
@@ -1506,6 +1519,7 @@ fn emit_system_notice(app_handle: &tauri::AppHandle, title: &str, body: &str) {
         kind: "system".to_string(),
         title: title.to_string(),
         body: body.to_string(),
+        app_name: None,
     };
     let _ = app_handle.emit("system-notification", notice);
 }
@@ -1784,8 +1798,9 @@ fn start_windows_notification_monitor(app_handle: tauri::AppHandle) {
                     } else {
                         for notification in notifications {
                             if seen_ids.insert(notification.id) {
+                                let app_name = notification.app_name.clone();
                                 let title = if notification.title.is_empty() {
-                                    notification.app_name.clone()
+                                    app_name.clone()
                                 } else {
                                     notification.title.clone()
                                 };
@@ -1795,9 +1810,14 @@ fn start_windows_notification_monitor(app_handle: tauri::AppHandle) {
                                         kind: "notification".to_string(),
                                         title,
                                         body: if notification.body.is_empty() {
-                                            notification.app_name
+                                            app_name.clone()
                                         } else {
                                             notification.body
+                                        },
+                                        app_name: if app_name.is_empty() {
+                                            None
+                                        } else {
+                                            Some(app_name)
                                         },
                                     },
                                 );
@@ -2593,16 +2613,16 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessMana
     #[test]
     fn calculates_island_window_rect_for_all_positions() {
         assert_eq!(
-            calculate_island_window_rect(0, 0, 1920, 1080, 240, 52, 0),
-            (840, 0, 240, 52)
+            calculate_island_window_rect(0, 0, 1920, 1080, 240, 52, 0, 12),
+            (840, 12, 240, 52)
         );
         assert_eq!(
-            calculate_island_window_rect(0, 0, 1920, 1080, 76, 150, 1),
-            (0, 465, 76, 150)
+            calculate_island_window_rect(0, 0, 1920, 1080, 76, 150, 1, 10),
+            (10, 465, 76, 150)
         );
         assert_eq!(
-            calculate_island_window_rect(0, 0, 1920, 1080, 76, 150, 2),
-            (1844, 465, 76, 150)
+            calculate_island_window_rect(0, 0, 1920, 1080, 76, 150, 2, 10),
+            (1834, 465, 76, 150)
         );
     }
 
@@ -2762,7 +2782,8 @@ fn main() {
             window.set_always_on_top(true)?;
             window.set_resizable(false)?;
             configure_borderless_island_window(&window).map_err(std::io::Error::other)?;
-            apply_island_window_bounds(&window, 204.0, 38.0, 0).map_err(std::io::Error::other)?;
+            apply_island_window_bounds(&window, 204.0, 38.0, 0, 0.0)
+                .map_err(std::io::Error::other)?;
 
             let icon = app.default_window_icon().cloned().ok_or_else(|| {
                 std::io::Error::other("Ikon aplikasi untuk system tray tidak ditemukan")

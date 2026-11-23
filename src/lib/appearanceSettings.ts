@@ -3,6 +3,7 @@ import { readAppSetting, saveAppSetting } from './storage';
 export const WINDHAWK_SETTINGS_KEY = 'di-windhawk-settings';
 
 export type PetStyle = 'none' | 'luffy' | 'ghost' | 'bot';
+export type IslandShapeStyle = 'default' | 'w11' | 'notch' | 'capsule' | 'sharp' | 'cyber';
 
 export const WINDHAWK_SETTINGS_DEFAULTS = {
   appearance: {
@@ -10,6 +11,7 @@ export const WINDHAWK_SETTINGS_DEFAULTS = {
     sizeScale: '1.0',
     petStyle: 'luffy',
     petIdleMinutes: 10,
+    edgeOffset: 0,
     panelWidth: 368,
     panelHeight: 332
   },
@@ -18,6 +20,7 @@ export const WINDHAWK_SETTINGS_DEFAULTS = {
     pillOpacity: 96,
     textScale: 100,
     fontFamily: '',
+    textColorOverride: '',
     contourBorderHex: '#1E1E22',
     pillBgColor: '#08080A',
     textPrimaryColor: '#FFFFFF'
@@ -26,10 +29,11 @@ export const WINDHAWK_SETTINGS_DEFAULTS = {
 
 export type WindhawkSettings = {
   appearance: {
-    shapeStyle: 'default' | 'w11' | 'notch';
+    shapeStyle: IslandShapeStyle;
     sizeScale: '0.8' | '1.0' | '1.2' | '1.5' | '1.8' | '2.0' | '2.5';
     petStyle: PetStyle;
     petIdleMinutes: number;
+    edgeOffset: number;
     panelWidth: number;
     panelHeight: number;
   };
@@ -38,6 +42,7 @@ export type WindhawkSettings = {
     pillOpacity: number;
     textScale: number;
     fontFamily: string;
+    textColorOverride: string;
     contourBorderHex: string;
     pillBgColor: string;
     textPrimaryColor: string;

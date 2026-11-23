@@ -111,6 +111,33 @@ body,
   border-top-right-radius: 0 !important;
 }
 
+.island-shell.island-shape-capsule {
+  border-radius: 22px !important;
+}
+
+.island-shell.island-shape-sharp {
+  border-radius: 4px !important;
+}
+
+.island-shell.island-shape-cyber {
+  border-radius: 0 !important;
+  clip-path: polygon(
+    10px 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    10px 100%,
+    0 calc(100% - 10px),
+    0 10px
+  );
+}
+
+.island-shell.island-shape-cyber::before {
+  border-radius: 0 !important;
+  box-shadow: inset 0 0 0 1px rgba(141, 183, 255, 0.25);
+}
+
 .island-position-bottom-center .island-shell {
   transform-origin: top center;
 }
@@ -5163,4 +5190,752 @@ body,
 @keyframes media-art-breathe {
   0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(169, 200, 255, 0); }
   50% { transform: scale(1.03); box-shadow: 0 0 12px rgba(169, 200, 255, 0.28); }
+}
+
+/* Theme Swatches & Custom Color Pickers */
+.settings-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.tools-panel--side .settings-theme-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-theme-chip {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 6px;
+  border: 1px solid var(--di-border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.025);
+  color: #9ba5b3;
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.settings-theme-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-theme-chip__swatch {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.settings-theme-chip:hover {
+  border-color: var(--di-border-strong);
+  background: var(--di-surface-hover);
+  color: #eef4ff;
+}
+
+.settings-theme-chip.is-active {
+  border-color: rgba(141, 183, 255, 0.45);
+  background: var(--di-surface-active);
+  color: #f4f8ff;
+}
+
+.settings-color-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.settings-color-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  padding: 4px 6px;
+  border: 1px solid var(--di-border);
+  border-radius: 7px;
+  background: var(--di-surface);
+  color: #cbd5e1;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.settings-color-field input[type="color"] {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-text-color-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-text-color-controls input[type="color"] {
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--di-border-strong);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.island-shell--custom-text,
+.island-shell--custom-text .idle-clock,
+.island-shell--custom-text .idle-clock__time,
+.island-shell--custom-text .idle-battery__percent,
+.island-shell--custom-text .idle-pin-card__copy strong,
+.island-shell--custom-text .idle-monitor-card__metric strong,
+.island-shell--custom-text .launcher-item__copy strong,
+.island-shell--custom-text .auto-notice strong,
+.island-shell--custom-text .media-detail__copy strong,
+.island-shell--custom-text .system-monitor__header strong,
+.island-shell--custom-text .system-monitor__metric-value,
+.island-shell--custom-text .tools-panel,
+.island-shell--custom-text .settings-page-heading h2,
+.island-shell--custom-text .settings-section-title strong {
+  color: var(--island-text-override) !important;
+}
+
+/* ============================================================
+   SIGNATURE PER-SHAPE MENU STYLES (ALL 6 SHAPES)
+   ============================================================ */
+
+/* 1. Windows 11 Fluent Style */
+.island-shape-w11 {
+  border-radius: 10px !important;
+}
+
+.island-shape-w11::before {
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.island-shape-w11 .tools-tabs {
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.island-shape-w11 .tools-tab {
+  position: relative;
+  border-radius: 5px;
+}
+
+.island-shape-w11 .tools-tab.is-active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.island-shape-w11 .tools-tab.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 1px;
+  left: 28%;
+  right: 28%;
+  height: 2px;
+  border-radius: 999px;
+  background: #60a5fa;
+}
+
+.island-shape-w11 .tool-card,
+.island-shape-w11 .settings-section,
+.island-shape-w11 .system-monitor__metric,
+.island-shape-w11 .launcher-item,
+.island-shape-w11 .idle-pin-card,
+.island-shape-w11 .idle-monitor-card {
+  border-radius: 7px;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 2. macOS Notch Seamless Style */
+.island-shape-notch .tools-tabs {
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 4px;
+}
+
+.island-shape-notch .tools-tab.is-active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.island-shape-notch .tool-card,
+.island-shape-notch .settings-section,
+.island-shape-notch .system-monitor__metric {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* 3. Capsule (Floating Full Rounded / Soft Bubble Menu) */
+.island-shape-capsule {
+  border-radius: 24px !important;
+}
+
+.island-shape-capsule .tools-tabs {
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.island-shape-capsule .tools-tab,
+.island-shape-capsule .settings-position-btn,
+.island-shape-capsule .settings-activity-chip,
+.island-shape-capsule .settings-theme-chip,
+.island-shape-capsule .capture-action {
+  border-radius: 999px;
+}
+
+.island-shape-capsule .launcher-item,
+.island-shape-capsule .tool-card,
+.island-shape-capsule .settings-section,
+.island-shape-capsule .system-monitor__metric,
+.island-shape-capsule .idle-pin-card,
+.island-shape-capsule .idle-monitor-card {
+  border-radius: 16px;
+}
+
+.island-shape-capsule .launcher-item__icon,
+.island-shape-capsule .auto-notice__icon,
+.island-shape-capsule .media-detail__art,
+.island-shape-capsule .system-monitor__header-icon,
+.island-shape-capsule .settings-section-icon {
+  border-radius: 50%;
+}
+
+.island-shape-capsule .tools-tab.is-active,
+.island-shape-capsule .settings-activity-chip.is-active,
+.island-shape-capsule .settings-theme-chip.is-active {
+  background: linear-gradient(135deg, rgba(141, 183, 255, 0.24), rgba(192, 132, 252, 0.18));
+  border-color: rgba(167, 199, 255, 0.36);
+}
+
+/* 4. Minimal Sharp (Architectural / Terminal Grid Menu) */
+.island-shape-sharp {
+  border-radius: 3px !important;
+}
+
+.island-shape-sharp::before {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: none;
+}
+
+.island-shape-sharp .tools-tabs,
+.island-shape-sharp .tools-tab,
+.island-shape-sharp .tool-card,
+.island-shape-sharp .settings-section,
+.island-shape-sharp .settings-position-btn,
+.island-shape-sharp .settings-activity-chip,
+.island-shape-sharp .settings-theme-chip,
+.island-shape-sharp .launcher-item,
+.island-shape-sharp .launcher-item__icon,
+.island-shape-sharp .auto-notice__icon,
+.island-shape-sharp .media-detail__art,
+.island-shape-sharp .system-monitor__header-icon,
+.island-shape-sharp .system-monitor__metric,
+.island-shape-sharp .idle-pin-card,
+.island-shape-sharp .idle-pin-card__icon,
+.island-shape-sharp .idle-monitor-card,
+.island-shape-sharp .capture-action,
+.island-shape-sharp .capture-shortcut-button,
+.island-shape-sharp .detail-action-button {
+  border-radius: 2px !important;
+}
+
+.island-shape-sharp .tools-tab.is-active {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.island-shape-sharp .idle-clock__time,
+.island-shape-sharp .system-monitor__metric-value,
+.island-shape-sharp .idle-monitor-card__metric strong {
+  letter-spacing: 0.03em;
+}
+
+/* 5. Cyber Chamfer (Futuristic HUD Menu) */
+.island-shape-cyber::before {
+  border-color: rgba(56, 189, 248, 0.38);
+  box-shadow:
+    inset 0 0 0 1px rgba(56, 189, 248, 0.24),
+    inset 0 0 18px rgba(56, 189, 248, 0.08);
+}
+
+.island-shape-cyber .tools-tabs,
+.island-shape-cyber .tool-card,
+.island-shape-cyber .settings-section,
+.island-shape-cyber .system-monitor__metric,
+.island-shape-cyber .launcher-item,
+.island-shape-cyber .idle-pin-card,
+.island-shape-cyber .idle-monitor-card,
+.island-shape-cyber .capture-action {
+  border-radius: 0 !important;
+  border-color: rgba(56, 189, 248, 0.22);
+  clip-path: polygon(
+    6px 0,
+    100% 0,
+    100% calc(100% - 6px),
+    calc(100% - 6px) 100%,
+    0 100%,
+    0 6px
+  );
+}
+
+.island-shape-cyber .tools-tab,
+.island-shape-cyber .settings-activity-chip,
+.island-shape-cyber .settings-theme-chip,
+.island-shape-cyber .settings-position-btn {
+  border-radius: 0 !important;
+}
+
+.island-shape-cyber .tools-tab.is-active,
+.island-shape-cyber .settings-activity-chip.is-active,
+.island-shape-cyber .settings-theme-chip.is-active,
+.island-shape-cyber .settings-position-btn-active {
+  border-color: rgba(56, 189, 248, 0.65);
+  background: rgba(56, 189, 248, 0.16);
+  color: #e0f2fe;
+  box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+.island-shape-cyber .auto-notice__label,
+.island-shape-cyber .settings-group-label {
+  color: #38bdf8;
+}
+
+.settings-notif-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-notif-header .settings-section-toggle {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-master-switch {
+  appearance: none;
+  width: 28px;
+  height: 16px;
+  flex: 0 0 28px;
+  position: relative;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.settings-master-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+.settings-master-switch:checked {
+  background: #3b82f6;
+}
+
+.settings-master-switch:checked::after {
+  transform: translateX(12px);
+  background: #ffffff;
+}
+
+.settings-notif-add {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+  margin-right: 6px;
+}
+
+.settings-notif-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--di-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #e8edf4;
+  font-size: 9px;
+  outline: none;
+}
+
+.settings-notif-add input:focus {
+  border-color: rgba(141, 183, 255, 0.45);
+}
+
+.settings-activity-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Fix ToolsPanel scrolling so bottom items always render & scroll cleanly */
+.tools-panel-wrap {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tools-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tools-content {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 14px;
+}
+
+.tools-tab-panel {
+  height: auto;
+  min-height: 100%;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-card {
+  height: auto;
+  min-height: 100%;
+  flex: 1 0 auto;
+}
+
+.ai-chat {
+  min-height: 220px;
+  height: 100%;
+}
+
+/* ============================================================
+   SIGNATURE PER-SHAPE MENU STYLES (ALL 6 SHAPES)
+   ============================================================ */
+
+/* 1. Windows 11 Fluent Style */
+.island-shape-w11 {
+  border-radius: 10px !important;
+}
+
+.island-shape-w11::before {
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.island-shape-w11 .tools-tabs {
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.island-shape-w11 .tools-tab {
+  position: relative;
+  border-radius: 5px;
+}
+
+.island-shape-w11 .tools-tab.is-active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.island-shape-w11 .tools-tab.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 1px;
+  left: 28%;
+  right: 28%;
+  height: 2px;
+  border-radius: 999px;
+  background: #60a5fa;
+}
+
+.island-shape-w11 .tool-card,
+.island-shape-w11 .settings-section,
+.island-shape-w11 .system-monitor__metric,
+.island-shape-w11 .launcher-item,
+.island-shape-w11 .idle-pin-card,
+.island-shape-w11 .idle-monitor-card {
+  border-radius: 7px;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 2. macOS Notch Seamless Style */
+.island-shape-notch .tools-tabs {
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 4px;
+}
+
+.island-shape-notch .tools-tab.is-active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.island-shape-notch .tool-card,
+.island-shape-notch .settings-section,
+.island-shape-notch .system-monitor__metric {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* 3. Capsule (Floating Full Rounded / Soft Bubble Menu) */
+.island-shape-capsule {
+  border-radius: 24px !important;
+}
+
+.island-shape-capsule .tools-tabs {
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.island-shape-capsule .tools-tab,
+.island-shape-capsule .settings-position-btn,
+.island-shape-capsule .settings-activity-chip,
+.island-shape-capsule .settings-theme-chip,
+.island-shape-capsule .capture-action {
+  border-radius: 999px;
+}
+
+.island-shape-capsule .launcher-item,
+.island-shape-capsule .tool-card,
+.island-shape-capsule .settings-section,
+.island-shape-capsule .system-monitor__metric,
+.island-shape-capsule .idle-pin-card,
+.island-shape-capsule .idle-monitor-card {
+  border-radius: 16px;
+}
+
+.island-shape-capsule .launcher-item__icon,
+.island-shape-capsule .auto-notice__icon,
+.island-shape-capsule .media-detail__art,
+.island-shape-capsule .system-monitor__header-icon,
+.island-shape-capsule .settings-section-icon {
+  border-radius: 50%;
+}
+
+.island-shape-capsule .tools-tab.is-active,
+.island-shape-capsule .settings-activity-chip.is-active,
+.island-shape-capsule .settings-theme-chip.is-active {
+  background: linear-gradient(135deg, rgba(141, 183, 255, 0.24), rgba(192, 132, 252, 0.18));
+  border-color: rgba(167, 199, 255, 0.36);
+}
+
+/* 4. Minimal Sharp (Architectural / Terminal Grid Menu) */
+.island-shape-sharp {
+  border-radius: 3px !important;
+}
+
+.island-shape-sharp::before {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: none;
+}
+
+.island-shape-sharp .tools-tabs,
+.island-shape-sharp .tools-tab,
+.island-shape-sharp .tool-card,
+.island-shape-sharp .settings-section,
+.island-shape-sharp .settings-position-btn,
+.island-shape-sharp .settings-activity-chip,
+.island-shape-sharp .settings-theme-chip,
+.island-shape-sharp .launcher-item,
+.island-shape-sharp .launcher-item__icon,
+.island-shape-sharp .auto-notice__icon,
+.island-shape-sharp .media-detail__art,
+.island-shape-sharp .system-monitor__header-icon,
+.island-shape-sharp .system-monitor__metric,
+.island-shape-sharp .idle-pin-card,
+.island-shape-sharp .idle-pin-card__icon,
+.island-shape-sharp .idle-monitor-card,
+.island-shape-sharp .capture-action,
+.island-shape-sharp .capture-shortcut-button,
+.island-shape-sharp .detail-action-button {
+  border-radius: 2px !important;
+}
+
+.island-shape-sharp .tools-tab.is-active {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.island-shape-sharp .idle-clock__time,
+.island-shape-sharp .system-monitor__metric-value,
+.island-shape-sharp .idle-monitor-card__metric strong {
+  letter-spacing: 0.03em;
+}
+
+/* 5. Cyber Chamfer (Futuristic HUD Menu) */
+.island-shape-cyber::before {
+  border-color: rgba(56, 189, 248, 0.38);
+  box-shadow:
+    inset 0 0 0 1px rgba(56, 189, 248, 0.24),
+    inset 0 0 18px rgba(56, 189, 248, 0.08);
+}
+
+.island-shape-cyber .tools-tabs,
+.island-shape-cyber .tool-card,
+.island-shape-cyber .settings-section,
+.island-shape-cyber .system-monitor__metric,
+.island-shape-cyber .launcher-item,
+.island-shape-cyber .idle-pin-card,
+.island-shape-cyber .idle-monitor-card,
+.island-shape-cyber .capture-action {
+  border-radius: 0 !important;
+  border-color: rgba(56, 189, 248, 0.22);
+  clip-path: polygon(
+    6px 0,
+    100% 0,
+    100% calc(100% - 6px),
+    calc(100% - 6px) 100%,
+    0 100%,
+    0 6px
+  );
+}
+
+.island-shape-cyber .tools-tab,
+.island-shape-cyber .settings-activity-chip,
+.island-shape-cyber .settings-theme-chip,
+.island-shape-cyber .settings-position-btn {
+  border-radius: 0 !important;
+}
+
+.island-shape-cyber .tools-tab.is-active,
+.island-shape-cyber .settings-activity-chip.is-active,
+.island-shape-cyber .settings-theme-chip.is-active,
+.island-shape-cyber .settings-position-btn-active {
+  border-color: rgba(56, 189, 248, 0.65);
+  background: rgba(56, 189, 248, 0.16);
+  color: #e0f2fe;
+  box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+.island-shape-cyber .auto-notice__label,
+.island-shape-cyber .settings-group-label {
+  color: #38bdf8;
+}
+
+.settings-notif-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-notif-header .settings-section-toggle {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-master-switch {
+  appearance: none;
+  width: 28px;
+  height: 16px;
+  flex: 0 0 28px;
+  position: relative;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.settings-master-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+.settings-master-switch:checked {
+  background: #3b82f6;
+}
+
+.settings-master-switch:checked::after {
+  transform: translateX(12px);
+  background: #ffffff;
+}
+
+.settings-notif-add {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+  margin-right: 6px;
+}
+
+.settings-notif-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--di-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #e8edf4;
+  font-size: 9px;
+  outline: none;
+}
+
+.settings-notif-add input:focus {
+  border-color: rgba(141, 183, 255, 0.45);
+}
+
+.settings-activity-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Fix ToolsPanel scrolling so bottom items always render & scroll cleanly */
+.tools-panel-wrap {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tools-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tools-content {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 14px;
+}
+
+.tools-tab-panel {
+  height: auto;
+  min-height: 100%;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-card {
+  height: auto;
+  min-height: 100%;
+  flex: 1 0 auto;
+}
+
+.ai-chat {
+  min-height: 220px;
+  height: 100%;
 }

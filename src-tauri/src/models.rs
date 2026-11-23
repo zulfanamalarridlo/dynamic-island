@@ -212,8 +212,10 @@ pub(crate) struct WindowsNotification {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AutoNotice {
     pub(crate) kind: String,
     pub(crate) title: String,
     pub(crate) body: String,
+    pub(crate) app_name: Option<String>,
 }

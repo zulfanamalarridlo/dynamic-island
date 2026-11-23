@@ -27,6 +27,7 @@ type IslandMode = 'idle' | 'launcher' | 'autoNotice' | 'mediaDetail' | 'systemMo
 type IslandPosition = 0 | 1 | 2; // 0 = top center, 1 = left center, 2 = right center
 type IslandStyle = CSSProperties & {
   '--island-pill-opacity': string;
+  '--island-text-override'?: string;
   '--island-custom-theme-bg'?: string;
   '--island-custom-theme-border'?: string;
   '--island-custom-theme-text'?: string;
@@ -56,6 +57,32 @@ function readActivityModuleSettings(): ActivityModuleSettings {
       return [key, typeof value === 'boolean' ? value : defaultValue];
     })
   ) as ActivityModuleSettings;
+}
+
+const DEFAULT_NOTIFICATION_APP_FILTERS: Record<string, boolean> = {
+  WhatsApp: true,
+  Telegram: true,
+  Discord: true,
+  Chrome: true,
+  Edge: true,
+  Slack: true,
+  'Microsoft Teams': true,
+  Outlook: true,
+  Spotify: true
+};
+
+function readNotificationAppFilters(): Record<string, boolean> {
+  const stored = readAppSetting<unknown>('di-notification-app-filters', null);
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    return { ...DEFAULT_NOTIFICATION_APP_FILTERS };
+  }
+  const merged: Record<string, boolean> = { ...DEFAULT_NOTIFICATION_APP_FILTERS };
+  for (const [key, value] of Object.entries(stored as Record<string, unknown>)) {
+    if (key.trim() && typeof value === 'boolean') {
+      merged[key.trim()] = value;
+    }
+  }
+  return merged;
 }
 
 function readIslandPosition(): IslandPosition {
@@ -110,9 +137,13 @@ export default function DynamicIsland() {
   const [windowsNotificationNotices, setWindowsNotificationNotices] = useState(
     () => readLocalBoolean('di-windows-notification-notices', true)
   );
+  const [notificationAppFilters, setNotificationAppFilters] = useState<Record<string, boolean>>(
+    readNotificationAppFilters
+  );
   const islandModeRef = useRef<IslandMode>('idle');
   const activityModuleSettingsRef = useRef(activityModuleSettings);
   const windowsNotificationNoticesRef = useRef(windowsNotificationNotices);
+  const notificationAppFiltersRef = useRef(notificationAppFilters);
   const autoNoticeRef = useRef<AutoNotice | null>(null);
   const previousSystemDataRef = useRef<SysData | null>(null);
   const autoNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -121,6 +152,7 @@ export default function DynamicIsland() {
 
   activityModuleSettingsRef.current = activityModuleSettings;
   windowsNotificationNoticesRef.current = windowsNotificationNotices;
+  notificationAppFiltersRef.current = notificationAppFilters;
 
   useEffect(() => {
     let active = true;
@@ -317,6 +349,7 @@ export default function DynamicIsland() {
   useEffect(() => saveAppSetting('di-file-shelf', shelfPaths), [shelfPaths]);
   useEffect(() => saveAppSetting('di-windows-activity-modules', activityModuleSettings), [activityModuleSettings]);
   useEffect(() => saveAppSetting('di-windows-notification-notices', windowsNotificationNotices), [windowsNotificationNotices]);
+  useEffect(() => saveAppSetting('di-notification-app-filters', notificationAppFilters), [notificationAppFilters]);
 
   useEffect(() => {
     let active = true;
@@ -324,6 +357,22 @@ export default function DynamicIsland() {
     void listen<AutoNotice>('system-notification', (event) => {
       const notice = event.payload;
       if (notice.kind === 'notification') {
+        const appName = notice.appName?.trim();
+        if (appName) {
+          const filters = notificationAppFiltersRef.current;
+          const matchedEntry = Object.entries(filters).find(
+            ([key]) => key.toLowerCase() === appName.toLowerCase() || appName.toLowerCase().includes(key.toLowerCase())
+          );
+          if (!matchedEntry) {
+            setNotificationAppFilters((current) => (
+              appName in current ? current : { ...current, [appName]: true }
+            ));
+          }
+          if (windowsNotificationNoticesRef.current && matchedEntry?.[1] !== false) {
+            showAutoNotice(notice);
+          }
+          return;
+        }
         if (windowsNotificationNoticesRef.current) showAutoNotice(notice);
         return;
       }
@@ -553,14 +602,18 @@ export default function DynamicIsland() {
     ? monitorPinned ? mediaPinned ? Math.min(236, sideHeight) : Math.min(186, sideHeight) : mediaPinned ? 116 : 118
     : monitorPinned ? 46 : mediaPinned ? 44 : 38;
 
+  const edgeOffset = Number.isFinite(windhawkSettings.appearance.edgeOffset)
+    ? Math.min(48, Math.max(0, windhawkSettings.appearance.edgeOffset))
+    : 0;
+  const isFloatingFromEdge = edgeOffset > 0;
   const islandVariants = {
     idle: {
       height: idleHeight,
       width: idleWidth,
-      borderTopLeftRadius: islandPosition === 1 || islandPosition === 0 ? 0 : 12,
-      borderTopRightRadius: islandPosition === 2 || islandPosition === 0 ? 0 : 12,
-      borderBottomLeftRadius: islandPosition === 1 ? 0 : 12,
-      borderBottomRightRadius: islandPosition === 2 ? 0 : 12,
+      borderTopLeftRadius: !isFloatingFromEdge && (islandPosition === 1 || islandPosition === 0) ? 0 : 12,
+      borderTopRightRadius: !isFloatingFromEdge && (islandPosition === 2 || islandPosition === 0) ? 0 : 12,
+      borderBottomLeftRadius: !isFloatingFromEdge && islandPosition === 1 ? 0 : 12,
+      borderBottomRightRadius: !isFloatingFromEdge && islandPosition === 2 ? 0 : 12,
     },
     launcher: {
       width: isSidePosition ? Math.min(212, sideWidth) : Math.min(340, topPanelWidth),
@@ -608,18 +661,23 @@ export default function DynamicIsland() {
     void invoke('set_island_window_bounds', {
       width: targetWindowWidth,
       height: targetWindowHeight,
-      position: islandPosition
+      position: islandPosition,
+      edgeOffset
     }).catch((error: unknown) => {
       console.error('Gagal memposisikan jendela Dynamic Island:', error);
     });
-  }, [targetWindowWidth, targetWindowHeight, islandPosition]);
+  }, [targetWindowWidth, targetWindowHeight, islandPosition, edgeOffset]);
 
+  const hasTextColorOverride = Boolean(windhawkSettings.themes.textColorOverride.trim());
   const islandStyle: IslandStyle = {
     width: activeVariant.width,
     height: activeVariant.height,
     zoom: effectiveScale,
     fontFamily: windhawkSettings.themes.fontFamily || undefined,
     '--island-pill-opacity': String(pillOpacity / 100),
+    ...(hasTextColorOverride ? {
+      '--island-text-override': windhawkSettings.themes.textColorOverride
+    } : {}),
     ...(windhawkSettings.themes.themePreset === 'custom' ? {
       '--island-custom-theme-bg': windhawkSettings.themes.pillBgColor,
       '--island-custom-theme-border': windhawkSettings.themes.contourBorderHex,
@@ -631,7 +689,7 @@ export default function DynamicIsland() {
     <LazyMotion features={domAnimation}>
     <div className="w-screen h-screen flex items-start justify-start overflow-hidden box-border select-none">
       <div
-        className={`island-shell border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
+        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
         style={{
           ...islandStyle,
           ...('borderRadius' in activeVariant
@@ -861,7 +919,7 @@ export default function DynamicIsland() {
 
         <m.div
           className="tools-panel-wrap"
-          style={{ display: islandMode === 'tools' ? 'block' : 'none' }}
+          style={{ display: islandMode === 'tools' ? 'flex' : 'none' }}
           initial={false}
           animate={islandMode === 'tools'
             ? { opacity: 1, x: 0, y: 0, scale: 1 }
@@ -875,8 +933,10 @@ export default function DynamicIsland() {
             shelfPaths={shelfPaths}
             activityModuleSettings={activityModuleSettings}
             windowsNotificationNotices={windowsNotificationNotices}
+            notificationAppFilters={notificationAppFilters}
             onActivityModuleSettingsChange={setActivityModuleSettings}
             onWindowsNotificationNoticesChange={setWindowsNotificationNotices}
+            onNotificationAppFiltersChange={setNotificationAppFilters}
             onClose={() => { void closeIsland(); }}
             onReturnToMenu={returnToLauncher}
             onClearClipboard={() => setClipboardItems([])}

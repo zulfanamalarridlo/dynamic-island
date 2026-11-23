@@ -13,6 +13,7 @@ export interface AutoNotice {
   kind: 'system' | 'activity' | 'media' | 'notification';
   title: string;
   body: string;
+  appName?: string | null;
   media?: MediaInfo;
   volumeLevel?: number;
   previousVolumeLevel?: number;
