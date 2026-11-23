@@ -1159,7 +1159,27 @@ fn save_pending_snip_capture(app: &tauri::AppHandle) -> Result<Option<String>, S
 
 #[tauri::command]
 fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
-    let image = capture_full_screen_bmp()?;
+    let main_window = app.get_webview_window("main");
+    let was_visible = main_window
+        .as_ref()
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if was_visible {
+        if let Some(window) = main_window.as_ref() {
+            let _ = window.hide();
+        }
+        thread::sleep(Duration::from_millis(120));
+    }
+
+    let capture_result = capture_full_screen_bmp();
+
+    if was_visible {
+        if let Some(window) = main_window.as_ref() {
+            let _ = window.show();
+        }
+    }
+
+    let image = capture_result?;
     let path = save_capture_file(&app, "screenshot", &image)?;
     if let Err(error) = app.emit("capture-saved", path.clone()) {
         eprintln!("Gagal memperbarui daftar screenshot: {error}");
