@@ -28,11 +28,11 @@ use windows::UI::Notifications::Management::{
     UserNotificationListener, UserNotificationListenerAccessStatus,
 };
 use windows::UI::Notifications::{KnownNotificationBindings, NotificationKinds};
-use windows::Win32::Foundation::{FILETIME, GlobalFree, HANDLE, HGLOBAL, HWND, POINT};
+use windows::Win32::Foundation::{FILETIME, GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BitBlt, CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC,
-    CreatePolygonRgn, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC,
-    SRCCOPY, SelectObject, SetWindowRgn, WINDING,
+    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC, SRCCOPY,
+    SelectObject,
 };
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{
@@ -56,7 +56,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_SCROLL, VK_SHIFT, VK_V, VK_X,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    GWL_STYLE, GetSystemMetrics, GetWindowLongW, HWND_TOPMOST, SM_CXVIRTUALSCREEN,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongW, SetWindowPos,
+    WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
 };
 use windows::core::ComInterface;
 mod models;
@@ -552,207 +555,127 @@ fn set_display_brightness(level: u8) -> Result<(), String> {
     }
 }
 
-fn append_region_arc(
-    points: &mut Vec<POINT>,
-    center_x: f64,
-    center_y: f64,
-    radius: f64,
-    start_angle: f64,
-    end_angle: f64,
-) {
-    const ARC_SEGMENTS: u32 = 12;
-    for step in 1..=ARC_SEGMENTS {
-        let progress = f64::from(step) / f64::from(ARC_SEGMENTS);
-        let angle = start_angle + (end_angle - start_angle) * progress;
-        points.push(POINT {
-            x: (center_x + radius * angle.cos()).round() as i32,
-            y: (center_y + radius * angle.sin()).round() as i32,
-        });
+fn calculate_island_window_rect(
+    monitor_x: i32,
+    monitor_y: i32,
+    monitor_width: i32,
+    monitor_height: i32,
+    width: i32,
+    height: i32,
+    position: u8,
+) -> (i32, i32, i32, i32) {
+    let clamped_width = width.clamp(1, monitor_width.max(1));
+    let clamped_height = height.clamp(1, monitor_height.max(1));
+    match position {
+        1 => (
+            monitor_x,
+            monitor_y + ((monitor_height - clamped_height).max(0) / 2),
+            clamped_width,
+            clamped_height,
+        ),
+        2 => (
+            monitor_x + (monitor_width - clamped_width).max(0),
+            monitor_y + ((monitor_height - clamped_height).max(0) / 2),
+            clamped_width,
+            clamped_height,
+        ),
+        _ => (
+            monitor_x + ((monitor_width - clamped_width).max(0) / 2),
+            monitor_y,
+            clamped_width,
+            clamped_height,
+        ),
     }
 }
 
-fn rounded_region_points(
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-    radius_top_left: f64,
-    radius_top_right: f64,
-    radius_bottom_right: f64,
-    radius_bottom_left: f64,
-) -> Vec<POINT> {
-    let max_radius = f64::from((right - left).min(bottom - top)) / 2.0;
-    let radius_top_left = radius_top_left.clamp(0.0, max_radius);
-    let radius_top_right = radius_top_right.clamp(0.0, max_radius);
-    let radius_bottom_right = radius_bottom_right.clamp(0.0, max_radius);
-    let radius_bottom_left = radius_bottom_left.clamp(0.0, max_radius);
-
-    let left = f64::from(left);
-    let top = f64::from(top);
-    let right = f64::from(right);
-    let bottom = f64::from(bottom);
-    let mut points = Vec::with_capacity(50);
-    points.push(POINT {
-        x: (left + radius_top_left).round() as i32,
-        y: top.round() as i32,
-    });
-    points.push(POINT {
-        x: (right - radius_top_right).round() as i32,
-        y: top.round() as i32,
-    });
-    append_region_arc(
-        &mut points,
-        right - radius_top_right,
-        top + radius_top_right,
-        radius_top_right,
-        -std::f64::consts::FRAC_PI_2,
-        0.0,
-    );
-    points.push(POINT {
-        x: right.round() as i32,
-        y: (bottom - radius_bottom_right).round() as i32,
-    });
-    append_region_arc(
-        &mut points,
-        right - radius_bottom_right,
-        bottom - radius_bottom_right,
-        radius_bottom_right,
-        0.0,
-        std::f64::consts::FRAC_PI_2,
-    );
-    points.push(POINT {
-        x: (left + radius_bottom_left).round() as i32,
-        y: bottom.round() as i32,
-    });
-    append_region_arc(
-        &mut points,
-        left + radius_bottom_left,
-        bottom - radius_bottom_left,
-        radius_bottom_left,
-        std::f64::consts::FRAC_PI_2,
-        std::f64::consts::PI,
-    );
-    points.push(POINT {
-        x: left.round() as i32,
-        y: (top + radius_top_left).round() as i32,
-    });
-    append_region_arc(
-        &mut points,
-        left + radius_top_left,
-        top + radius_top_left,
-        radius_top_left,
-        std::f64::consts::PI,
-        3.0 * std::f64::consts::FRAC_PI_2,
-    );
-    points
-}
-
-fn apply_island_window_region(
-    window: &tauri::WebviewWindow,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    radius_top_left: f64,
-    radius_top_right: f64,
-    radius_bottom_right: f64,
-    radius_bottom_left: f64,
-) -> Result<(), String> {
-    if !x.is_finite()
-        || !y.is_finite()
-        || !width.is_finite()
-        || !height.is_finite()
-        || !radius_top_left.is_finite()
-        || !radius_top_right.is_finite()
-        || !radius_bottom_right.is_finite()
-        || !radius_bottom_left.is_finite()
-        || width <= 0.0
-        || height <= 0.0
-        || radius_top_left < 0.0
-        || radius_top_right < 0.0
-        || radius_bottom_right < 0.0
-        || radius_bottom_left < 0.0
-    {
-        return Err("Batas Dynamic Island tidak valid".to_string());
-    }
-
-    let scale_factor = window
-        .scale_factor()
-        .map_err(|error| error.to_string())?
-        .max(0.1);
-    let window_size = window
-        .inner_size()
-        .map_err(|error| error.to_string())?
-        .to_logical::<f64>(scale_factor);
-    let left = x.max(0.0).min(window_size.width);
-    let top = y.max(0.0).min(window_size.height);
-    let right = (x + width).min(window_size.width).max(0.0);
-    let bottom = (y + height).min(window_size.height).max(0.0);
-    if right <= left || bottom <= top {
-        return Err("Area Dynamic Island berada di luar jendela".to_string());
-    }
-
-    let left = (left * scale_factor).floor() as i32;
-    let top = (top * scale_factor).floor() as i32;
-    let right = (right * scale_factor).ceil() as i32;
-    let bottom = (bottom * scale_factor).ceil() as i32;
-    let points = rounded_region_points(
-        left,
-        top,
-        right,
-        bottom,
-        radius_top_left * scale_factor,
-        radius_top_right * scale_factor,
-        radius_bottom_right * scale_factor,
-        radius_bottom_left * scale_factor,
-    );
+fn configure_borderless_island_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     let hwnd = window
         .hwnd()
         .map(|handle| HWND(handle.0 as isize))
         .map_err(|error| error.to_string())?;
-    let region = unsafe { CreatePolygonRgn(&points, WINDING) };
-    if region.0 == 0 {
-        return Err(std::io::Error::last_os_error().to_string());
-    }
-
-    if unsafe { SetWindowRgn(hwnd, region, true) } == 0 {
-        let error = std::io::Error::last_os_error().to_string();
-        if !unsafe { DeleteObject(HGDIOBJ(region.0)) }.as_bool() {
-            return Err(format!(
-                "Gagal mengatur area Dynamic Island: {error}; gagal membersihkan region"
-            ));
-        }
-        return Err(format!("Gagal mengatur area Dynamic Island: {error}"));
+    unsafe {
+        let current_style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let stripped = current_style
+            & !(WS_CAPTION.0
+                | WS_THICKFRAME.0
+                | WS_MINIMIZEBOX.0
+                | WS_MAXIMIZEBOX.0
+                | WS_SYSMENU.0);
+        let new_style = stripped | WS_POPUP.0;
+        SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
     }
     Ok(())
 }
 
-#[tauri::command]
-fn set_island_window_region(
-    app: tauri::AppHandle,
-    x: f64,
-    y: f64,
+fn apply_island_window_bounds(
+    window: &tauri::WebviewWindow,
     width: f64,
     height: f64,
-    radius_top_left: f64,
-    radius_top_right: f64,
-    radius_bottom_right: f64,
-    radius_bottom_left: f64,
+    position: u8,
+) -> Result<(), String> {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err("Ukuran jendela Dynamic Island tidak valid".to_string());
+    }
+
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .or(window.primary_monitor().map_err(|error| error.to_string())?)
+        .ok_or_else(|| "Monitor utama tidak ditemukan".to_string())?;
+    let scale_factor = monitor.scale_factor().max(0.1);
+    let monitor_pos = monitor.position();
+    let monitor_size = monitor.size();
+    let phys_width = (width * scale_factor).ceil() as i32;
+    let phys_height = (height * scale_factor).ceil() as i32;
+    let (x, y, w, h) = calculate_island_window_rect(
+        monitor_pos.x,
+        monitor_pos.y,
+        monitor_size.width as i32,
+        monitor_size.height as i32,
+        phys_width,
+        phys_height,
+        position,
+    );
+
+    let hwnd = window
+        .hwnd()
+        .map(|handle| HWND(handle.0 as isize))
+        .map_err(|error| error.to_string())?;
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        )
+    }
+    .map_err(|error| format!("Gagal memposisikan jendela Dynamic Island: {error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_island_window_bounds(
+    app: tauri::AppHandle,
+    width: f64,
+    height: f64,
+    position: u8,
 ) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Jendela utama Dynamic Island tidak ditemukan".to_string())?;
-    apply_island_window_region(
-        &window,
-        x,
-        y,
-        width,
-        height,
-        radius_top_left,
-        radius_top_right,
-        radius_bottom_right,
-        radius_bottom_left,
-    )
+    apply_island_window_bounds(&window, width, height, position)
 }
 
 #[tauri::command]
@@ -2368,8 +2291,8 @@ fn initialize_app_settings(app: &tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        calculate_cpu_usage, encode_bmp_from_bgra, parse_legacy_clickup_settings,
-        rounded_region_points, wrap_dib_as_bmp,
+        calculate_cpu_usage, calculate_island_window_rect, encode_bmp_from_bgra,
+        parse_legacy_clickup_settings, wrap_dib_as_bmp,
     };
 
     #[test]
@@ -2382,12 +2305,19 @@ mod tests {
     }
 
     #[test]
-    fn rounded_region_points_preserve_individual_corner_radii() {
-        let points = rounded_region_points(0, 0, 100, 50, 0.0, 10.0, 20.0, 5.0);
-
-        assert_eq!((points[0].x, points[0].y), (0, 0));
-        assert_eq!((points[1].x, points[1].y), (90, 0));
-        assert_eq!((points[14].x, points[14].y), (100, 30));
+    fn calculates_island_window_rect_for_all_positions() {
+        assert_eq!(
+            calculate_island_window_rect(0, 0, 1920, 1080, 240, 52, 0),
+            (840, 0, 240, 52)
+        );
+        assert_eq!(
+            calculate_island_window_rect(0, 0, 1920, 1080, 76, 150, 1),
+            (0, 465, 76, 150)
+        );
+        assert_eq!(
+            calculate_island_window_rect(0, 0, 1920, 1080, 76, 150, 2),
+            (1844, 465, 76, 150)
+        );
     }
 
     #[test]
@@ -2543,27 +2473,10 @@ fn main() {
             let window = app
                 .get_webview_window("main")
                 .ok_or_else(|| std::io::Error::other("Jendela utama tidak ditemukan"))?;
-            window.set_fullscreen(true)?;
             window.set_always_on_top(true)?;
             window.set_resizable(false)?;
-            let monitor = window
-                .current_monitor()?
-                .or(window.primary_monitor()?)
-                .ok_or_else(|| std::io::Error::other("Monitor utama tidak ditemukan"))?;
-            let scale_factor = monitor.scale_factor();
-            let monitor_size = monitor.size().to_logical::<f64>(scale_factor);
-            apply_island_window_region(
-                &window,
-                (monitor_size.width - 92.0).max(0.0) / 2.0,
-                0.0,
-                92.0,
-                38.0,
-                0.0,
-                0.0,
-                12.0,
-                12.0,
-            )
-            .map_err(std::io::Error::other)?;
+            configure_borderless_island_window(&window).map_err(std::io::Error::other)?;
+            apply_island_window_bounds(&window, 240.0, 52.0, 0).map_err(std::io::Error::other)?;
 
             let icon = app.default_window_icon().cloned().ok_or_else(|| {
                 std::io::Error::other("Ikon aplikasi untuk system tray tidak ditemukan")
@@ -2614,7 +2527,7 @@ fn main() {
             set_power_plan,
             scan_wifi,
             connect_wifi,
-            set_island_window_region,
+            set_island_window_bounds,
             lock_windows,
             open_snipping_tool,
             take_screenshot,

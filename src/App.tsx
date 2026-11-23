@@ -105,8 +105,6 @@ export default function DynamicIsland() {
     () => readLocalBoolean('di-windows-notification-notices', true)
   );
   const islandModeRef = useRef<IslandMode>('idle');
-  const islandRef = useRef<HTMLDivElement | null>(null);
-  const scheduleBoundsReportRef = useRef<() => void>(() => {});
   const activityModuleSettingsRef = useRef(activityModuleSettings);
   const windowsNotificationNoticesRef = useRef(windowsNotificationNotices);
   const autoNoticeRef = useRef<AutoNotice | null>(null);
@@ -166,10 +164,6 @@ export default function DynamicIsland() {
   useEffect(() => saveAppSetting('di-pin-monitor', monitorPinned), [monitorPinned]);
 
   useEffect(() => {
-    scheduleBoundsReportRef.current();
-  }, [windhawkSettings.appearance.sizeScale, windhawkSettings.themes.textScale]);
-
-  useEffect(() => {
     const timer = window.setInterval(() => setTime(new Date()), 15_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -189,94 +183,6 @@ export default function DynamicIsland() {
       active = false;
     };
   }, []);
-
-  useEffect(() => {
-    let active = true;
-    let updating = false;
-    let pending = false;
-    let lastBounds = '';
-    let frame: number | null = null;
-    const reportBounds = async () => {
-      const island = islandRef.current;
-      if (!active || !island) return;
-      if (updating) {
-        pending = true;
-        return;
-      }
-
-      const bounds = island.getBoundingClientRect();
-      const nativeX = Math.floor(bounds.x);
-      const nativeY = Math.floor(bounds.y);
-      const nativeWidth = Math.ceil(bounds.right) - nativeX;
-      const nativeHeight = Math.ceil(bounds.bottom) - nativeY;
-      const style = window.getComputedStyle(island);
-      const parseRadius = (value: string) => {
-        const radius = Number.parseFloat(value);
-        return Number.isFinite(radius) ? radius : 0;
-      };
-      const zoom = parseRadius(style.zoom) || 1;
-      const radiusTopLeft = parseRadius(style.borderTopLeftRadius) * zoom;
-      const radiusTopRight = parseRadius(style.borderTopRightRadius) * zoom;
-      const radiusBottomRight = parseRadius(style.borderBottomRightRadius) * zoom;
-      const radiusBottomLeft = parseRadius(style.borderBottomLeftRadius) * zoom;
-      const boundsKey = `${nativeX},${nativeY},${nativeWidth},${nativeHeight},${radiusTopLeft},${radiusTopRight},${radiusBottomRight},${radiusBottomLeft}`;
-      if (boundsKey === lastBounds) return;
-
-      updating = true;
-      try {
-        await invoke('set_island_window_region', {
-          x: nativeX,
-          y: nativeY,
-          width: nativeWidth,
-          height: nativeHeight,
-          radiusTopLeft,
-          radiusTopRight,
-          radiusBottomRight,
-          radiusBottomLeft
-        });
-        lastBounds = boundsKey;
-      } catch (error) {
-        console.error('Gagal menempatkan jendela Dynamic Island:', error);
-      } finally {
-        updating = false;
-        if (active) {
-          if (pending) {
-            pending = false;
-            scheduleBoundsReport();
-          }
-        }
-      }
-    };
-
-    const scheduleBoundsReport = () => {
-      if (!active || frame !== null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        void reportBounds();
-      });
-    };
-    scheduleBoundsReportRef.current = scheduleBoundsReport;
-    const island = islandRef.current;
-    const resizeObserver = island && typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(scheduleBoundsReport)
-      : null;
-    if (island) resizeObserver?.observe(island);
-    window.addEventListener('resize', scheduleBoundsReport);
-    scheduleBoundsReport();
-    return () => {
-      active = false;
-      resizeObserver?.disconnect();
-      window.removeEventListener('resize', scheduleBoundsReport);
-      if (frame !== null) window.cancelAnimationFrame(frame);
-      scheduleBoundsReportRef.current = () => {};
-    };
-  }, [islandPosition]);
-
-  useEffect(() => {
-    scheduleBoundsReportRef.current();
-    const timer = window.setTimeout(() => scheduleBoundsReportRef.current(), 350);
-    return () => window.clearTimeout(timer);
-  }, [islandMode, islandPosition]);
 
   useEffect(() => saveAppSetting('di-island-position', islandPosition), [islandPosition]);
 
@@ -672,15 +578,31 @@ export default function DynamicIsland() {
     }
   };
 
-  const springTransition = { type: 'spring', stiffness: 155, damping: 30, mass: 0.9 };
   const panelTransition = { duration: 0.32, ease: [0.22, 1, 0.36, 1] };
   const sideTravel = islandPosition === 1 ? -7 : islandPosition === 2 ? 7 : 0;
   const verticalTravel = islandPosition === 0 ? -6 : 0;
   const pillOpacity = Number.isFinite(windhawkSettings.themes.pillOpacity)
     ? Math.min(100, Math.max(35, windhawkSettings.themes.pillOpacity))
     : 100;
+  const effectiveScale = Number(windhawkSettings.appearance.sizeScale) * windhawkSettings.themes.textScale / 100;
+  const activeVariant = islandVariants[islandMode];
+  const targetWindowWidth = Math.max(1, Math.ceil(activeVariant.width * effectiveScale));
+  const targetWindowHeight = Math.max(1, Math.ceil(activeVariant.height * effectiveScale));
+
+  useEffect(() => {
+    void invoke('set_island_window_bounds', {
+      width: targetWindowWidth,
+      height: targetWindowHeight,
+      position: islandPosition
+    }).catch((error: unknown) => {
+      console.error('Gagal memposisikan jendela Dynamic Island:', error);
+    });
+  }, [targetWindowWidth, targetWindowHeight, islandPosition]);
+
   const islandStyle: IslandStyle = {
-    zoom: Number(windhawkSettings.appearance.sizeScale) * windhawkSettings.themes.textScale / 100,
+    width: activeVariant.width,
+    height: activeVariant.height,
+    zoom: effectiveScale,
     fontFamily: windhawkSettings.themes.fontFamily || undefined,
     '--island-pill-opacity': String(pillOpacity / 100),
     ...(windhawkSettings.themes.themePreset === 'custom' ? {
@@ -692,20 +614,20 @@ export default function DynamicIsland() {
 
   return (
     <LazyMotion features={domAnimation}>
-    <div className={`w-screen h-screen flex ${
-      islandPosition === 0 ? 'justify-center items-start' :
-      islandPosition === 1 ? 'justify-start items-center' :
-      'justify-end items-center'
-    } box-border select-none pointer-events-none`}>
-      <m.div
-        ref={islandRef}
-        className={`island-shell${pillOpacity < 96 ? ' backdrop-blur-xl' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
-        style={islandStyle}
-        variants={islandVariants}
-        initial="idle"
-        animate={islandMode}
-        transition={springTransition}
-        onAnimationComplete={() => scheduleBoundsReportRef.current()}
+    <div className="w-screen h-screen flex items-start justify-start overflow-hidden box-border select-none">
+      <div
+        className={`island-shell border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
+        style={{
+          ...islandStyle,
+          ...('borderRadius' in activeVariant
+            ? { borderRadius: activeVariant.borderRadius }
+            : {
+                borderTopLeftRadius: activeVariant.borderTopLeftRadius,
+                borderTopRightRadius: activeVariant.borderTopRightRadius,
+                borderBottomLeftRadius: activeVariant.borderBottomLeftRadius,
+                borderBottomRightRadius: activeVariant.borderBottomRightRadius
+              })
+        }}
         onPointerEnter={() => {
           if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
           closeDelayTimer.current = null;
@@ -925,7 +847,7 @@ export default function DynamicIsland() {
             openSettingsRequest={openSettingsRequest}
           />
         </m.div>
-      </m.div>
+      </div>
     </div>
     </LazyMotion>
   );
