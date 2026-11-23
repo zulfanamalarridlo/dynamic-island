@@ -12,11 +12,18 @@ export interface LayoutItemConfig<T extends string> {
   visible: boolean;
 }
 
+export interface CustomShortcut {
+  id: string;
+  label: string;
+  target: string;
+}
+
 export interface IslandLayoutSettings {
   preset: LayoutPresetId | 'custom';
   idleWidgets: LayoutItemConfig<IdleWidgetId>[];
   launcherItems: LayoutItemConfig<LauncherItemId>[];
   launcherColumns: LauncherColumns;
+  customShortcuts: CustomShortcut[];
   toolsTabs: LayoutItemConfig<ToolTabId>[];
   toolsNavLayout: ToolsNavLayout;
   toolsTabLabels: boolean;
@@ -48,6 +55,7 @@ export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
       { id: 'capture', visible: false }
     ],
     launcherColumns: 4,
+    customShortcuts: [],
     toolsTabs: [
       { id: 'focus', visible: true },
       { id: 'tasks', visible: true },
@@ -80,6 +88,7 @@ export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
       { id: 'capture', visible: false }
     ],
     launcherColumns: 2,
+    customShortcuts: [],
     toolsTabs: [
       { id: 'focus', visible: true },
       { id: 'ai', visible: true },
@@ -112,6 +121,7 @@ export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
       { id: 'lock', visible: true }
     ],
     launcherColumns: 3,
+    customShortcuts: [],
     toolsTabs: [
       { id: 'ai', visible: true },
       { id: 'tasks', visible: true },
@@ -144,6 +154,7 @@ export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
       { id: 'capture', visible: false }
     ],
     launcherColumns: 3,
+    customShortcuts: [],
     toolsTabs: [
       { id: 'focus', visible: true },
       { id: 'tasks', visible: true },
@@ -206,6 +217,19 @@ export function readLayoutSettings(): IslandLayoutSettings {
   const nav = record.toolsNavLayout;
   const validNavs: ToolsNavLayout[] = ['auto', 'top', 'left', 'right'];
 
+  const rawShortcuts = Array.isArray(record.customShortcuts) ? record.customShortcuts : [];
+  const customShortcuts: CustomShortcut[] = rawShortcuts
+    .filter((entry): entry is CustomShortcut => (
+      Boolean(entry)
+      && typeof entry === 'object'
+      && typeof (entry as CustomShortcut).id === 'string'
+      && typeof (entry as CustomShortcut).label === 'string'
+      && typeof (entry as CustomShortcut).target === 'string'
+      && Boolean((entry as CustomShortcut).label.trim())
+      && Boolean((entry as CustomShortcut).target.trim())
+    ))
+    .slice(0, 8);
+
   return {
     preset: typeof preset === 'string' && validPresets.includes(preset)
       ? (preset as IslandLayoutSettings['preset'])
@@ -213,6 +237,7 @@ export function readLayoutSettings(): IslandLayoutSettings {
     idleWidgets: normalizeItemList(record.idleWidgets, ALL_IDLE_WIDGETS, defaults.idleWidgets),
     launcherItems: normalizeItemList(record.launcherItems, ALL_LAUNCHER_ITEMS, defaults.launcherItems),
     launcherColumns: cols === 2 || cols === 3 || cols === 4 ? cols : defaults.launcherColumns,
+    customShortcuts,
     toolsTabs: normalizeItemList(record.toolsTabs, ALL_TOOL_TABS, defaults.toolsTabs, 'settings'),
     toolsNavLayout: typeof nav === 'string' && validNavs.includes(nav as ToolsNavLayout)
       ? (nav as ToolsNavLayout)
@@ -225,12 +250,13 @@ export function saveLayoutSettings(layout: IslandLayoutSettings): void {
   saveAppSetting(LAYOUT_SETTINGS_KEY, layout);
 }
 
-export function cloneLayoutPreset(presetId: LayoutPresetId): IslandLayoutSettings {
+export function cloneLayoutPreset(presetId: LayoutPresetId, keepShortcuts: CustomShortcut[] = []): IslandLayoutSettings {
   const source = LAYOUT_PRESETS[presetId];
   return {
     ...source,
     idleWidgets: source.idleWidgets.map((item) => ({ ...item })),
     launcherItems: source.launcherItems.map((item) => ({ ...item })),
+    customShortcuts: keepShortcuts.map((item) => ({ ...item })),
     toolsTabs: source.toolsTabs.map((item) => ({ ...item }))
   };
 }

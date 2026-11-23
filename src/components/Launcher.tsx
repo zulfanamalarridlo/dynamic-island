@@ -1,7 +1,7 @@
 import { m } from 'framer-motion';
-import { Camera, Gauge, LayoutGrid, LockKeyhole, Music2, Sparkles } from 'lucide-react';
+import { Camera, ExternalLink, Gauge, LayoutGrid, LockKeyhole, Music2, Sparkles } from 'lucide-react';
 import { localize, type AppLanguage } from '../lib/i18n';
-import type { LauncherColumns, LauncherItemId, LayoutItemConfig } from '../lib/layoutSettings';
+import type { CustomShortcut, LauncherColumns, LauncherItemId, LayoutItemConfig } from '../lib/layoutSettings';
 import type { MediaInfo } from '../types';
 
 interface LauncherProps {
@@ -9,6 +9,7 @@ interface LauncherProps {
   media: MediaInfo | null;
   artwork: string | null;
   items: LayoutItemConfig<LauncherItemId>[];
+  customShortcuts: CustomShortcut[];
   columns: LauncherColumns;
   isSidePosition: boolean;
   travelX: number;
@@ -19,6 +20,7 @@ interface LauncherProps {
   onOpenSystemMonitor: () => void;
   onOpenAi: () => void;
   onOpenCapture: () => void;
+  onOpenCustomShortcut: (target: string) => void;
   onLock: () => void;
 }
 
@@ -27,6 +29,7 @@ export default function Launcher({
   media,
   artwork,
   items,
+  customShortcuts,
   columns,
   isSidePosition,
   travelX,
@@ -37,11 +40,15 @@ export default function Launcher({
   onOpenSystemMonitor,
   onOpenAi,
   onOpenCapture,
+  onOpenCustomShortcut,
   onLock
 }: LauncherProps) {
   const visibleItems = items.filter((item) => item.visible);
-  const effectiveItems = visibleItems.length > 0 ? visibleItems : [{ id: 'tools' as LauncherItemId, visible: true }];
-  const gridCols = isSidePosition ? 1 : Math.min(columns, effectiveItems.length);
+  const effectiveItems = visibleItems.length > 0 || customShortcuts.length > 0
+    ? visibleItems
+    : [{ id: 'tools' as LauncherItemId, visible: true }];
+  const totalCount = effectiveItems.length + customShortcuts.length;
+  const gridCols = isSidePosition ? 1 : Math.min(columns, Math.max(1, totalCount));
 
   return (
     <m.nav
@@ -108,6 +115,18 @@ export default function Launcher({
           </button>
         );
       })}
+      {customShortcuts.map((shortcut) => (
+        <button
+          key={shortcut.id}
+          className="launcher-item launcher-item--custom"
+          onClick={() => onOpenCustomShortcut(shortcut.target)}
+          aria-label={shortcut.label}
+          title={shortcut.target}
+        >
+          <span className="launcher-item__icon"><ExternalLink size={15} /></span>
+          <span className="launcher-item__copy"><strong>{shortcut.label}</strong></span>
+        </button>
+      ))}
     </m.nav>
   );
 }

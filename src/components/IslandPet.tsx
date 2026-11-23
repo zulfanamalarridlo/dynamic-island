@@ -5,6 +5,7 @@ type PetMood = 'normal' | 'bored' | 'hungry' | 'sleepy';
 
 interface IslandPetProps {
   style: PetStyle;
+  customImage?: string;
   isPlaying: boolean;
   isCharging: boolean;
   pcIdleSeconds: number;
@@ -13,6 +14,7 @@ interface IslandPetProps {
 
 export default function IslandPet({
   style,
+  customImage,
   isPlaying,
   isCharging,
   pcIdleSeconds,
@@ -36,7 +38,11 @@ export default function IslandPet({
   }
 
   const resolvedStyle: Exclude<PetStyle, 'none'> =
-    style === 'ghost' || style === 'bot' ? style : 'luffy';
+    style === 'custom' && customImage
+      ? 'custom'
+      : style === 'ghost' || style === 'bot'
+        ? style
+        : 'luffy';
   const title = resolvedStyle === 'luffy'
     ? (isPlaying
       ? 'Luffy vibing!'
@@ -59,6 +65,20 @@ export default function IslandPet({
       aria-label={resolvedStyle === 'luffy' ? 'Luffy companion' : 'Island companion'}
       title={title}
     >
+      {resolvedStyle === 'custom' && customImage && (
+        <span className="island-pet__stage">
+          <img className="island-pet__custom-img" src={customImage} alt="Custom pet" />
+          {idleMood === 'bored' && (
+            <span className="island-pet__thought island-pet__thought--bored" aria-hidden="true">…</span>
+          )}
+          {idleMood === 'hungry' && (
+            <span className="island-pet__thought island-pet__thought--meat" aria-hidden="true">🍖</span>
+          )}
+          {idleMood === 'sleepy' && (
+            <span className="island-pet__thought island-pet__thought--zzz" aria-hidden="true">z</span>
+          )}
+        </span>
+      )}
       {resolvedStyle === 'luffy' && (
         <span className="island-pet__stage">
           <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">

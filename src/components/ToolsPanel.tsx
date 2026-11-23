@@ -5,14 +5,15 @@ import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, m } from 'framer-motion';
 import {
   Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, File, KeyRound, LayoutTemplate, ListTodo,
-  LocateFixed, Palette, Pause, Play, Plus, RotateCcw, ScanText, Scissors, Settings, Smile, Sparkles, X
+  LocateFixed, Palette, Pause, Play, Plus, RotateCcw, Save, ScanText, Scissors, Settings, Smile, Sparkles, Trash2, Upload, X
 } from 'lucide-react';
 import AiChatTab from './AiChatTab';
 import LayoutEditor from './LayoutEditor';
 import { localize, type AppLanguage } from '../lib/i18n';
 import { readAppSetting, saveAppSetting } from '../lib/storage';
-import type { IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
+import type { AnimationSpeed, ClockFormat, DateFormatStyle, IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
 import type { IslandLayoutSettings, ToolTabId } from '../lib/layoutSettings';
+import { parseConfigBundle, readSavedProfiles, saveProfiles, serializeConfigBundle, type SavedIslandProfile } from '../lib/profiles';
 
 export interface ClipboardItem {
   text: string;
@@ -323,6 +324,10 @@ export default function ToolsPanel({
   const [ocrRunning, setOcrRunning] = useState(false);
   const [ocrText, setOcrText] = useState<string | null>(null);
   const [newNotifApp, setNewNotifApp] = useState('');
+  const [savedProfiles, setSavedProfiles] = useState<SavedIslandProfile[]>(readSavedProfiles);
+  const [newProfileName, setNewProfileName] = useState('');
+  const [importJsonText, setImportJsonText] = useState('');
+  const [showImportJson, setShowImportJson] = useState(false);
 
   const resolvedNavLayout = layoutSettings.toolsNavLayout === 'auto'
     ? (islandPosition === 0 ? 'top' : islandPosition === 1 ? 'left' : 'right')
@@ -332,6 +337,7 @@ export default function ToolsPanel({
     general: false,
     theme: false,
     layout: false,
+    profiles: false,
     pet: false,
     activity: false,
     notifications: false,
@@ -1167,6 +1173,95 @@ export default function ToolsPanel({
                       </select>
                     </label>
                   </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Format jam', 'Clock format')}</span>
+                      <select
+                        value={windhawkSettings.appearance.clockFormat}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, clockFormat: event.target.value as ClockFormat }
+                        })}
+                      >
+                        <option value="24h">24 {localize(language, 'jam', 'hour')}</option>
+                        <option value="12h">12 {localize(language, 'jam (AM/PM)', 'hour (AM/PM)')}</option>
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-inline-row">
+                      <span className="settings-section-title">
+                        <strong>{localize(language, 'Tampilkan detik', 'Show seconds')}</strong>
+                      </span>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={windhawkSettings.appearance.showSeconds}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, showSeconds: event.target.checked }
+                        })}
+                      />
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Format tanggal', 'Date format')}</span>
+                      <select
+                        value={windhawkSettings.appearance.dateFormat}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, dateFormat: event.target.value as DateFormatStyle }
+                        })}
+                      >
+                        <option value="short">{localize(language, 'Ringkas (Sen, 23 Nov)', 'Short (Mon, 23 Nov)')}</option>
+                        <option value="numeric">{localize(language, 'Angka (23/11)', 'Numeric (23/11)')}</option>
+                        <option value="full">{localize(language, 'Lengkap (23 Nov 2026)', 'Full (23 Nov 2026)')}</option>
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Animasi', 'Animation')}</span>
+                      <select
+                        value={windhawkSettings.appearance.animationSpeed}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, animationSpeed: event.target.value as AnimationSpeed }
+                        })}
+                      >
+                        <option value="snappy">{localize(language, 'Cepat', 'Snappy')}</option>
+                        <option value="normal">Normal</option>
+                        <option value="smooth">{localize(language, 'Halus', 'Smooth')}</option>
+                        <option value="off">{localize(language, 'Mati', 'Off')}</option>
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Durasi notif', 'Notice time')}</span>
+                      <input
+                        className="settings-range"
+                        type="range"
+                        min={2}
+                        max={10}
+                        step={1}
+                        value={Math.min(10, Math.max(2, windhawkSettings.appearance.noticeDurationSec))}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, noticeDurationSec: Number(event.target.value) }
+                        })}
+                      />
+                      <small className="settings-range-value">
+                        {Math.min(10, Math.max(2, windhawkSettings.appearance.noticeDurationSec))}{localize(language, 'dtk', 's')}
+                      </small>
+                    </label>
+                  </section>
                 </div>
               )}
             </section>
@@ -1334,6 +1429,81 @@ export default function ToolsPanel({
                   </section>
 
                   <section className="settings-section settings-position-section">
+                    <div className="settings-language-field">
+                      <span>{localize(language, 'Gradasi latar', 'Bg gradient')}</span>
+                      <div className="settings-text-color-controls">
+                        <input
+                          className="settings-master-switch"
+                          type="checkbox"
+                          role="switch"
+                          checked={windhawkSettings.themes.bgGradientEnabled}
+                          onChange={(event) => onWindhawkSettingsChange({
+                            ...windhawkSettings,
+                            themes: { ...windhawkSettings.themes, bgGradientEnabled: event.target.checked }
+                          })}
+                        />
+                        {windhawkSettings.themes.bgGradientEnabled && (
+                          <input
+                            type="color"
+                            aria-label={localize(language, 'Warna gradasi kedua', 'Second gradient color')}
+                            value={windhawkSettings.themes.bgGradientTo}
+                            onChange={(event) => onWindhawkSettingsChange({
+                              ...windhawkSettings,
+                              themes: { ...windhawkSettings.themes, bgGradientTo: event.target.value }
+                            })}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <div className="settings-language-field">
+                      <span>{localize(language, 'Border glow', 'Border glow')}</span>
+                      <div className="settings-text-color-controls">
+                        <input
+                          className="settings-master-switch"
+                          type="checkbox"
+                          role="switch"
+                          checked={windhawkSettings.themes.borderGlowEnabled}
+                          onChange={(event) => onWindhawkSettingsChange({
+                            ...windhawkSettings,
+                            themes: { ...windhawkSettings.themes, borderGlowEnabled: event.target.checked }
+                          })}
+                        />
+                        {(windhawkSettings.themes.borderGlowEnabled || windhawkSettings.themes.musicReactiveGlow) && (
+                          <input
+                            type="color"
+                            aria-label={localize(language, 'Warna glow', 'Glow color')}
+                            value={windhawkSettings.themes.borderGlowColor}
+                            onChange={(event) => onWindhawkSettingsChange({
+                              ...windhawkSettings,
+                              themes: { ...windhawkSettings.themes, borderGlowColor: event.target.value }
+                            })}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-inline-row">
+                      <span className="settings-section-title">
+                        <strong>{localize(language, 'Glow ikuti musik', 'Music reactive glow')}</strong>
+                      </span>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={windhawkSettings.themes.musicReactiveGlow}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          themes: { ...windhawkSettings.themes, musicReactiveGlow: event.target.checked }
+                        })}
+                      />
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
                     <label className="settings-language-field">
                       <span>{localize(language, 'Skala', 'Scale')}</span>
                       <select
@@ -1441,6 +1611,139 @@ export default function ToolsPanel({
               )}
             </section>
 
+            <section className="settings-section settings-section--profiles">
+              <button
+                className="settings-section-toggle"
+                type="button"
+                aria-expanded={expandedSettings.profiles}
+                aria-controls="settings-profiles-content"
+                onClick={() => setExpandedSettings((current) => ({ ...current, profiles: !current.profiles }))}
+              >
+                <span className="settings-section-icon"><Save size={13} /></span>
+                <span className="settings-section-title">
+                  <strong>{localize(language, 'Profil & Backup', 'Profiles & Backup')}</strong>
+                  <small>{localize(language, 'Simpan, ganti & ekspor JSON', 'Save, switch & export JSON')}</small>
+                </span>
+                <span className="settings-enabled-count">{savedProfiles.length}</span>
+                <ChevronRight className="settings-section-chevron" size={14} />
+              </button>
+              {expandedSettings.profiles && (
+                <div className="settings-section-content" id="settings-profiles-content">
+                  <form
+                    className="settings-profile-save"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const name = newProfileName.trim();
+                      if (!name) return;
+                      const nextProfile: SavedIslandProfile = {
+                        id: `prof-${Date.now()}`,
+                        name,
+                        settings: windhawkSettings,
+                        layout: layoutSettings
+                      };
+                      const next = [nextProfile, ...savedProfiles.filter((p) => p.name.toLowerCase() !== name.toLowerCase())].slice(0, 12);
+                      setSavedProfiles(next);
+                      saveProfiles(next);
+                      setNewProfileName('');
+                      onNotice('Profil', localize(language, `Profil "${name}" tersimpan`, `Profile "${name}" saved`));
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={newProfileName}
+                      placeholder={localize(language, 'Nama profil (Kerja, Gaming)…', 'Profile name (Work, Gaming)…')}
+                      onChange={(event) => setNewProfileName(event.target.value)}
+                    />
+                    <button type="submit" className="settings-activity-bulk" disabled={!newProfileName.trim()}>
+                      {localize(language, 'Simpan', 'Save')}
+                    </button>
+                  </form>
+
+                  {savedProfiles.length > 0 && (
+                    <div className="layout-editor__list" style={{ marginTop: 5 }}>
+                      {savedProfiles.map((profile) => (
+                        <div key={profile.id} className="layout-editor__row">
+                          <button
+                            type="button"
+                            className="settings-profile-apply"
+                            onClick={() => {
+                              onWindhawkSettingsChange(profile.settings);
+                              onLayoutSettingsChange(profile.layout);
+                              onNotice('Profil', localize(language, `Profil "${profile.name}" diterapkan`, `Profile "${profile.name}" applied`));
+                            }}
+                          >
+                            {profile.name}
+                          </button>
+                          <button
+                            type="button"
+                            className="layout-editor__btn"
+                            title={localize(language, 'Hapus profil', 'Delete profile')}
+                            onClick={() => {
+                              const next = savedProfiles.filter((item) => item.id !== profile.id);
+                              setSavedProfiles(next);
+                              saveProfiles(next);
+                            }}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="settings-profile-io">
+                    <button
+                      type="button"
+                      className="settings-activity-bulk"
+                      onClick={() => {
+                        onCopyClipboard(serializeConfigBundle(windhawkSettings, layoutSettings));
+                        onNotice('Backup', localize(language, 'JSON profil disalin ke clipboard', 'Profile JSON copied to clipboard'));
+                      }}
+                    >
+                      {localize(language, 'Ekspor JSON', 'Export JSON')}
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-activity-bulk"
+                      onClick={() => setShowImportJson((open) => !open)}
+                    >
+                      {localize(language, 'Impor JSON', 'Import JSON')}
+                    </button>
+                  </div>
+
+                  {showImportJson && (
+                    <div className="settings-profile-import">
+                      <textarea
+                        rows={3}
+                        value={importJsonText}
+                        placeholder='{"version":1,"settings":...}'
+                        onChange={(event) => setImportJsonText(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="tool-primary"
+                        disabled={!importJsonText.trim()}
+                        onClick={() => {
+                          const parsed = parseConfigBundle(importJsonText);
+                          if (!parsed) {
+                            onNotice('Backup', localize(language, 'Format JSON tidak valid', 'Invalid JSON format'));
+                            return;
+                          }
+                          onWindhawkSettingsChange(parsed.settings);
+                          onLayoutSettingsChange(parsed.layout);
+                          setImportJsonText('');
+                          setShowImportJson(false);
+                          onNotice('Backup', localize(language, 'Profil JSON berhasil diimpor', 'Profile JSON imported'));
+                        }}
+                      >
+                        {localize(language, 'Terapkan JSON', 'Apply JSON')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
             <section className="settings-section settings-section--pet">
               <button
                 className="settings-section-toggle"
@@ -1459,9 +1762,11 @@ export default function ToolsPanel({
                     ? localize(language, 'Off', 'Off')
                     : windhawkSettings.appearance.petStyle === 'luffy'
                       ? 'Luffy'
-                      : windhawkSettings.appearance.petStyle === 'ghost'
-                        ? localize(language, 'Hantu', 'Ghost')
-                        : 'Bot'}
+                      : windhawkSettings.appearance.petStyle === 'custom'
+                        ? 'Custom'
+                        : windhawkSettings.appearance.petStyle === 'ghost'
+                          ? localize(language, 'Hantu', 'Ghost')
+                          : 'Bot'}
                 </span>
                 <ChevronRight className="settings-section-chevron" size={14} />
               </button>
@@ -1470,6 +1775,7 @@ export default function ToolsPanel({
                   <div className="settings-activity-grid" role="radiogroup" aria-label={localize(language, 'Pilih karakter pet', 'Choose pet character')}>
                     {([
                       ['luffy', 'Luffy (One Piece)'],
+                      ['custom', 'Custom (PNG/GIF)'],
                       ['ghost', localize(language, 'Hantu', 'Ghost')],
                       ['bot', 'Mini Bot'],
                       ['none', localize(language, 'Nonaktif', 'Off')]
@@ -1493,6 +1799,48 @@ export default function ToolsPanel({
                       );
                     })}
                   </div>
+
+                  {windhawkSettings.appearance.petStyle === 'custom' && (
+                    <div className="settings-pet-upload">
+                      <label className="settings-pet-upload__btn">
+                        <Upload size={12} />
+                        <span>{localize(language, 'Pilih gambar PNG/GIF', 'Upload PNG/GIF')}</span>
+                        <input
+                          type="file"
+                          accept="image/png,image/gif,image/webp,image/svg+xml,image/jpeg"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            if (file.size > 600_000) {
+                              onNotice('Pet', localize(language, 'Ukuran file maksimal 600KB', 'Max file size is 600KB'));
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              if (typeof reader.result === 'string') {
+                                onWindhawkSettingsChange({
+                                  ...windhawkSettings,
+                                  appearance: {
+                                    ...windhawkSettings.appearance,
+                                    petStyle: 'custom',
+                                    customPetImage: reader.result
+                                  }
+                                });
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }}
+                        />
+                      </label>
+                      {windhawkSettings.appearance.customPetImage && (
+                        <img
+                          className="settings-pet-upload__preview"
+                          src={windhawkSettings.appearance.customPetImage}
+                          alt="Custom pet preview"
+                        />
+                      )}
+                    </div>
+                  )}
 
                   {windhawkSettings.appearance.petStyle !== 'none' && (
                     <section className="settings-section settings-position-section" style={{ marginTop: 6 }}>

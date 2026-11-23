@@ -5861,6 +5861,278 @@ body,
   cursor: default;
 }
 
+/* Custom Pet Image, Gradient, Glow, Shortcuts, Profiles */
+.island-pet__custom-img {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.island-shell--gradient::before {
+  background: linear-gradient(135deg, var(--island-theme-bg, #08080a), var(--island-bg-gradient-to, #1e293b)) !important;
+}
+
+.island-shell--glow::before {
+  border-color: color-mix(in srgb, var(--island-glow-color, #60a5fa) 62%, transparent) !important;
+  box-shadow:
+    inset 0 0 12px color-mix(in srgb, var(--island-glow-color, #60a5fa) 24%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--island-glow-color, #60a5fa) 35%, transparent) !important;
+}
+
+.island-shell--music-glow::before {
+  border-color: color-mix(in srgb, var(--island-glow-color, #60a5fa) 75%, transparent) !important;
+  animation: island-music-aura 2s ease-in-out infinite;
+}
+
+@keyframes island-music-aura {
+  0%, 100% {
+    box-shadow: inset 0 0 10px color-mix(in srgb, var(--island-glow-color, #60a5fa) 18%, transparent);
+  }
+  50% {
+    box-shadow: inset 0 0 22px color-mix(in srgb, var(--island-glow-color, #60a5fa) 42%, transparent);
+  }
+}
+
+.layout-editor__shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--di-border);
+}
+
+.layout-editor__sublabel {
+  color: #9ba5b3;
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.layout-editor__shortcut-form {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr) 24px;
+  gap: 4px;
+}
+
+.layout-editor__shortcut-form input,
+.settings-profile-save input,
+.settings-profile-import textarea {
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--di-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #eef2f7;
+  font-size: 9.5px;
+  outline: none;
+}
+
+.layout-editor__shortcut-form button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: #e8edf4;
+  color: #17191d;
+  cursor: pointer;
+}
+
+.layout-editor__shortcut-form button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.settings-pet-upload {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 5px 7px;
+  border: 1px dashed var(--di-border-strong);
+  border-radius: 8px;
+  background: var(--di-surface);
+}
+
+.settings-pet-upload__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #dbe8ff;
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-pet-upload__btn input {
+  display: none;
+}
+
+.settings-pet-upload__preview {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.settings-profile-save {
+  display: flex;
+  gap: 5px;
+}
+
+.settings-profile-save input {
+  flex: 1;
+}
+
+.settings-profile-apply {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #eef2f7;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-profile-apply:hover {
+  color: #93c5fd;
+}
+
+.settings-profile-io {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.settings-profile-import {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.settings-profile-import textarea {
+  resize: vertical;
+  font-family: Consolas, monospace;
+  font-size: 9px;
+}
+
+/* Pure Vertical 1-Column Side Idle Rail (Left & Right) */
+.island-idle--side.island-idle--pinned {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  padding: 6px 4px;
+}
+
+.island-idle--side {
+  padding: 6px 3px;
+}
+
+.island-idle--side .idle-monitor-card {
+  width: 100%;
+  grid-template-columns: 1fr;
+  gap: 3px;
+  padding: 4px;
+}
+
+.island-idle--side .idle-monitor-card__metric,
+.island-position-right-center .island-idle--side .idle-monitor-card__metric {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px;
+  padding: 4px 5px;
+}
+
+.island-idle--side .idle-monitor-card__metric strong {
+  font-size: 8px;
+}
+
+.island-position-left-center .island-launcher,
+.island-position-right-center .island-launcher {
+  gap: 3px;
+  padding: 5px;
+}
+
+.island-position-left-center .launcher-item,
+.island-position-right-center .launcher-item {
+  gap: 6px;
+  padding: 5px 6px;
+}
+
+.island-position-left-center .launcher-item__icon,
+.island-position-right-center .launcher-item__icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+}
+
+.island-idle--side.island-idle--pinned .idle-clock,
+.island-position-right-center .island-idle--side.island-idle--pinned .idle-clock {
+  width: 100%;
+  min-height: auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 2px 0;
+  text-align: center;
+}
+
+.island-idle--side.island-idle--pinned .idle-clock__time--vertical {
+  flex-direction: row;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.island-idle--side.island-idle--pinned .idle-clock__time--vertical > span:first-child::after {
+  content: ":";
+}
+
+.island-idle--side .idle-monitor-card {
+  width: 100%;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  padding: 5px;
+}
+
+.island-idle--side .idle-monitor-card__metric,
+.island-position-right-center .island-idle--side .idle-monitor-card__metric {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 5px 7px;
+}
+
+.island-idle--side .idle-pin-card--media {
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 5px;
+  text-align: center;
+}
+
+.island-idle--side .idle-pin-card--media .idle-pin-card__copy {
+  width: 100%;
+  align-items: center;
+}
+
+.island-idle--side .idle-pin-card--media .idle-pin-card__eq {
+  margin-left: 0;
+}
+
 /* ============================================================
    SIGNATURE PER-SHAPE MENU STYLES (ALL 6 SHAPES)
    ============================================================ */
@@ -6410,4 +6682,276 @@ body,
 .layout-editor__btn:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+/* Custom Pet Image, Gradient, Glow, Shortcuts, Profiles */
+.island-pet__custom-img {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.island-shell--gradient::before {
+  background: linear-gradient(135deg, var(--island-theme-bg, #08080a), var(--island-bg-gradient-to, #1e293b)) !important;
+}
+
+.island-shell--glow::before {
+  border-color: color-mix(in srgb, var(--island-glow-color, #60a5fa) 62%, transparent) !important;
+  box-shadow:
+    inset 0 0 12px color-mix(in srgb, var(--island-glow-color, #60a5fa) 24%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--island-glow-color, #60a5fa) 35%, transparent) !important;
+}
+
+.island-shell--music-glow::before {
+  border-color: color-mix(in srgb, var(--island-glow-color, #60a5fa) 75%, transparent) !important;
+  animation: island-music-aura 2s ease-in-out infinite;
+}
+
+@keyframes island-music-aura {
+  0%, 100% {
+    box-shadow: inset 0 0 10px color-mix(in srgb, var(--island-glow-color, #60a5fa) 18%, transparent);
+  }
+  50% {
+    box-shadow: inset 0 0 22px color-mix(in srgb, var(--island-glow-color, #60a5fa) 42%, transparent);
+  }
+}
+
+.layout-editor__shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--di-border);
+}
+
+.layout-editor__sublabel {
+  color: #9ba5b3;
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.layout-editor__shortcut-form {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr) 24px;
+  gap: 4px;
+}
+
+.layout-editor__shortcut-form input,
+.settings-profile-save input,
+.settings-profile-import textarea {
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--di-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #eef2f7;
+  font-size: 9.5px;
+  outline: none;
+}
+
+.layout-editor__shortcut-form button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: #e8edf4;
+  color: #17191d;
+  cursor: pointer;
+}
+
+.layout-editor__shortcut-form button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.settings-pet-upload {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 5px 7px;
+  border: 1px dashed var(--di-border-strong);
+  border-radius: 8px;
+  background: var(--di-surface);
+}
+
+.settings-pet-upload__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #dbe8ff;
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-pet-upload__btn input {
+  display: none;
+}
+
+.settings-pet-upload__preview {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.settings-profile-save {
+  display: flex;
+  gap: 5px;
+}
+
+.settings-profile-save input {
+  flex: 1;
+}
+
+.settings-profile-apply {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #eef2f7;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-profile-apply:hover {
+  color: #93c5fd;
+}
+
+.settings-profile-io {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.settings-profile-import {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.settings-profile-import textarea {
+  resize: vertical;
+  font-family: Consolas, monospace;
+  font-size: 9px;
+}
+
+/* Pure Vertical 1-Column Side Idle Rail (Left & Right) */
+.island-idle--side.island-idle--pinned {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  padding: 6px 4px;
+}
+
+.island-idle--side {
+  padding: 6px 3px;
+}
+
+.island-idle--side .idle-monitor-card {
+  width: 100%;
+  grid-template-columns: 1fr;
+  gap: 3px;
+  padding: 4px;
+}
+
+.island-idle--side .idle-monitor-card__metric,
+.island-position-right-center .island-idle--side .idle-monitor-card__metric {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px;
+  padding: 4px 5px;
+}
+
+.island-idle--side .idle-monitor-card__metric strong {
+  font-size: 8px;
+}
+
+.island-position-left-center .island-launcher,
+.island-position-right-center .island-launcher {
+  gap: 3px;
+  padding: 5px;
+}
+
+.island-position-left-center .launcher-item,
+.island-position-right-center .launcher-item {
+  gap: 6px;
+  padding: 5px 6px;
+}
+
+.island-position-left-center .launcher-item__icon,
+.island-position-right-center .launcher-item__icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+}
+
+.island-idle--side.island-idle--pinned .idle-clock,
+.island-position-right-center .island-idle--side.island-idle--pinned .idle-clock {
+  width: 100%;
+  min-height: auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 2px 0;
+  text-align: center;
+}
+
+.island-idle--side.island-idle--pinned .idle-clock__time--vertical {
+  flex-direction: row;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.island-idle--side.island-idle--pinned .idle-clock__time--vertical > span:first-child::after {
+  content: ":";
+}
+
+.island-idle--side .idle-monitor-card {
+  width: 100%;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  padding: 5px;
+}
+
+.island-idle--side .idle-monitor-card__metric,
+.island-position-right-center .island-idle--side .idle-monitor-card__metric {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 5px 7px;
+}
+
+.island-idle--side .idle-pin-card--media {
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 5px;
+  text-align: center;
+}
+
+.island-idle--side .idle-pin-card--media .idle-pin-card__copy {
+  width: 100%;
+  align-items: center;
+}
+
+.island-idle--side .idle-pin-card--media .idle-pin-card__eq {
+  margin-left: 0;
 }

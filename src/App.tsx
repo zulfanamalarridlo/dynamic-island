@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimatePresence, domAnimation, LazyMotion, m } from 'framer-motion';
 import { Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, LayoutGrid, Mic, Music2, Wifi } from 'lucide-react';
@@ -29,6 +30,8 @@ type IslandPosition = 0 | 1 | 2; // 0 = top center, 1 = left center, 2 = right c
 type IslandStyle = CSSProperties & {
   '--island-pill-opacity': string;
   '--island-text-override'?: string;
+  '--island-bg-gradient-to'?: string;
+  '--island-glow-color'?: string;
   '--island-custom-theme-bg'?: string;
   '--island-custom-theme-border'?: string;
   '--island-custom-theme-text'?: string;
@@ -157,6 +160,7 @@ export default function DynamicIsland() {
   const activityModuleSettingsRef = useRef(activityModuleSettings);
   const windowsNotificationNoticesRef = useRef(windowsNotificationNotices);
   const notificationAppFiltersRef = useRef(notificationAppFilters);
+  const noticeDurationMsRef = useRef(4000);
   const autoNoticeRef = useRef<AutoNotice | null>(null);
   const previousSystemDataRef = useRef<SysData | null>(null);
   const autoNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -166,6 +170,7 @@ export default function DynamicIsland() {
   activityModuleSettingsRef.current = activityModuleSettings;
   windowsNotificationNoticesRef.current = windowsNotificationNotices;
   notificationAppFiltersRef.current = notificationAppFilters;
+  noticeDurationMsRef.current = Math.min(10, Math.max(2, windhawkSettings.appearance.noticeDurationSec || 4)) * 1000;
 
   useEffect(() => {
     let active = true;
@@ -216,9 +221,10 @@ export default function DynamicIsland() {
   useEffect(() => saveAppSetting('di-pin-monitor', monitorPinned), [monitorPinned]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setTime(new Date()), 15_000);
+    const intervalMs = windhawkSettings.appearance.showSeconds ? 1_000 : 15_000;
+    const timer = window.setInterval(() => setTime(new Date()), intervalMs);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [windhawkSettings.appearance.showSeconds]);
 
   useEffect(() => {
     let active = true;
@@ -505,7 +511,7 @@ export default function DynamicIsland() {
       } else {
         clearAutoNotice();
       }
-    }, 3600);
+    }, noticeDurationMsRef.current);
   };
 
   const showAutoNotice = (notice: AutoNotice) => {
@@ -575,15 +581,40 @@ export default function DynamicIsland() {
     setOpenTabRequest((current) => ({ tab: targetTab, seq: (current?.seq ?? 0) + 1 }));
   };
 
+  const openCustomShortcut = async (target: string) => {
+    const cleaned = target.trim();
+    if (!cleaned) return;
+    await closeIsland();
+    try {
+      if (/^https?:\/\//i.test(cleaned)) {
+        await openUrl(cleaned);
+      } else {
+        await openPath(cleaned);
+      }
+    } catch (error) {
+      showAutoNotice({
+        kind: 'system',
+        title: localize(language, 'Gagal membuka pintasan', 'Failed to open shortcut'),
+        body: error instanceof Error ? error.message : String(error)
+      });
+    }
+  };
+
   const openSnippingTool = () => runCaptureAction('open_snipping_tool', 'Gagal membuka Snipping Tool');
   const takeScreenshot = () => runCaptureAction('take_screenshot', 'Gagal mengambil screenshot');
 
-  const formattedTime = time.toLocaleTimeString(language === 'id' ? 'id-ID' : 'en-US', { hour: '2-digit', minute: '2-digit' });
-  const formattedDate = time.toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short'
+  const locale = language === 'id' ? 'id-ID' : 'en-US';
+  const formattedTime = time.toLocaleTimeString(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(windhawkSettings.appearance.showSeconds ? { second: '2-digit' } : {}),
+    hour12: windhawkSettings.appearance.clockFormat === '12h'
   });
+  const formattedDate = windhawkSettings.appearance.dateFormat === 'numeric'
+    ? time.toLocaleDateString(locale, { day: '2-digit', month: '2-digit' })
+    : windhawkSettings.appearance.dateFormat === 'full'
+      ? time.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
+      : time.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' });
   const batteryAvailable = sysData.battery !== null;
   const batteryLevel = Math.max(0, Math.min(sysData.battery ?? 0, 100));
   const batteryColor = !batteryAvailable
@@ -623,18 +654,26 @@ export default function DynamicIsland() {
   const liveExtraWidth = isIdleVisible('live')
     ? (sysData.activeDownload ? 56 : 0) + (sysData.bluetoothDevice ? 46 : 0)
     : 0;
-  const visibleLauncherCount = Math.max(1, layoutSettings.launcherItems.filter((item) => item.visible).length);
+  const visibleLauncherCount = Math.max(
+    1,
+    layoutSettings.launcherItems.filter((item) => item.visible).length + layoutSettings.customShortcuts.length
+  );
   const launcherRows = Math.ceil(visibleLauncherCount / Math.min(layoutSettings.launcherColumns, visibleLauncherCount));
   const topLauncherHeight = launcherRows * 48 + 14;
   const dynamicSideLauncherHeight = Math.min(sideHeight, Math.max(110, visibleLauncherCount * 48 + 18));
-  const baseIdleWidth = (showClock ? 72 : 0) + (showDate ? 64 : 0) + (showBattery ? 58 : 0) + (showPetWidget ? 30 : 0) + (!showClock && !showDate ? 34 : 0) + 18;
+  const baseIdleWidth = (showClock ? (windhawkSettings.appearance.showSeconds ? 92 : 72) : 0)
+    + (showDate ? (windhawkSettings.appearance.dateFormat === 'full' ? 84 : 64) : 0)
+    + (showBattery ? 58 : 0)
+    + (showPetWidget ? 30 : 0)
+    + (!showClock && !showDate ? 34 : 0)
+    + 18;
   const idleWidth = isSidePosition
-    ? Math.min(sideWidth, hasPinnedIdleContent ? 216 : 60)
+    ? Math.min(sideWidth, hasPinnedIdleContent ? 82 : 48)
     : Math.min(topPanelWidth, (hasPinnedIdleContent
       ? mediaPinned && monitorPinned ? 388 : mediaPinned ? 276 : 332
       : Math.max(96, baseIdleWidth)) + privacyExtraWidth + liveExtraWidth);
   const idleHeight = isSidePosition
-    ? monitorPinned ? mediaPinned ? Math.min(236, sideHeight) : Math.min(186, sideHeight) : mediaPinned ? 116 : 118
+    ? monitorPinned ? mediaPinned ? Math.min(296, sideHeight) : Math.min(236, sideHeight) : mediaPinned ? 156 : 118
     : monitorPinned ? 46 : mediaPinned ? 44 : 38;
 
   const edgeOffset = Number.isFinite(windhawkSettings.appearance.edgeOffset)
@@ -651,7 +690,7 @@ export default function DynamicIsland() {
       borderBottomRightRadius: !isFloatingFromEdge && islandPosition === 2 ? 0 : 12,
     },
     launcher: {
-      width: isSidePosition ? Math.min(212, sideWidth) : Math.min(348, topPanelWidth),
+      width: isSidePosition ? Math.min(136, sideWidth) : Math.min(348, topPanelWidth),
       height: isSidePosition ? dynamicSideLauncherHeight : topLauncherHeight,
       borderRadius: 14,
     },
@@ -681,7 +720,14 @@ export default function DynamicIsland() {
     }
   };
 
-  const panelTransition = { duration: 0.32, ease: [0.22, 1, 0.36, 1] };
+  const animDuration = windhawkSettings.appearance.animationSpeed === 'off'
+    ? 0.01
+    : windhawkSettings.appearance.animationSpeed === 'snappy'
+      ? 0.16
+      : windhawkSettings.appearance.animationSpeed === 'smooth'
+        ? 0.48
+        : 0.30;
+  const panelTransition = { duration: animDuration, ease: [0.22, 1, 0.36, 1] };
   const sideTravel = islandPosition === 1 ? -7 : islandPosition === 2 ? 7 : 0;
   const verticalTravel = islandPosition === 0 ? -6 : 0;
   const pillOpacity = Number.isFinite(windhawkSettings.themes.pillOpacity)
@@ -712,12 +758,17 @@ export default function DynamicIsland() {
   }, [targetWindowWidth, targetWindowHeight, islandPosition, edgeOffset]);
 
   const hasTextColorOverride = Boolean(windhawkSettings.themes.textColorOverride.trim());
+  const hasGradientBg = windhawkSettings.themes.bgGradientEnabled;
+  const hasBorderGlow = windhawkSettings.themes.borderGlowEnabled;
+  const hasMusicGlow = windhawkSettings.themes.musicReactiveGlow && Boolean(sysData.media?.is_playing);
   const islandStyle: IslandStyle = {
     width: activeVariant.width,
     height: activeVariant.height,
     zoom: effectiveScale,
     fontFamily: windhawkSettings.themes.fontFamily || undefined,
     '--island-pill-opacity': String(pillOpacity / 100),
+    '--island-bg-gradient-to': windhawkSettings.themes.bgGradientTo,
+    '--island-glow-color': windhawkSettings.themes.borderGlowColor,
     ...(hasTextColorOverride ? {
       '--island-text-override': windhawkSettings.themes.textColorOverride
     } : {}),
@@ -732,7 +783,7 @@ export default function DynamicIsland() {
     <LazyMotion features={domAnimation}>
     <div className="w-screen h-screen flex items-start justify-start overflow-hidden box-border select-none">
       <div
-        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
+        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''}${hasGradientBg ? ' island-shell--gradient' : ''}${hasBorderGlow ? ' island-shell--glow' : ''}${hasMusicGlow ? ' island-shell--music-glow' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
         style={{
           ...islandStyle,
           ...('borderRadius' in activeVariant
@@ -820,6 +871,7 @@ export default function DynamicIsland() {
                       <IslandPet
                         key="pet"
                         style={windhawkSettings.appearance.petStyle}
+                        customImage={windhawkSettings.appearance.customPetImage}
                         isPlaying={Boolean(sysData.media?.is_playing)}
                         isCharging={sysData.batteryState === 'Charging'}
                         pcIdleSeconds={sysData.pcIdleSeconds ?? 0}
@@ -990,6 +1042,7 @@ export default function DynamicIsland() {
               media={sysData.media}
               artwork={mediaArtwork}
               items={layoutSettings.launcherItems}
+              customShortcuts={layoutSettings.customShortcuts}
               columns={layoutSettings.launcherColumns}
               isSidePosition={isSidePosition}
               travelX={sideTravel}
@@ -1000,6 +1053,7 @@ export default function DynamicIsland() {
               onOpenSystemMonitor={openSystemMonitor}
               onOpenAi={() => openToolsTab('ai')}
               onOpenCapture={() => openToolsTab('capture')}
+              onOpenCustomShortcut={(target) => { void openCustomShortcut(target); }}
               onLock={() => { void lockWindows(); }}
             />
           )}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, RotateCcw } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { localize, type AppLanguage } from '../lib/i18n';
 import {
   cloneLayoutPreset,
@@ -38,6 +38,8 @@ function reorderItems<T extends string>(
 export default function LayoutEditor({ language, layout, onChange }: LayoutEditorProps) {
   const [section, setSection] = useState<EditorSection>('idle');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [shortcutLabel, setShortcutLabel] = useState('');
+  const [shortcutTarget, setShortcutTarget] = useState('');
 
   const idleLabels: Record<IdleWidgetId, string> = {
     pet: localize(language, 'Karakter Pet', 'Pet'),
@@ -154,7 +156,7 @@ export default function LayoutEditor({ language, layout, onChange }: LayoutEdito
             key={preset.id}
             type="button"
             className={`settings-activity-chip${layout.preset === preset.id ? ' is-active' : ''}`}
-            onClick={() => onChange(cloneLayoutPreset(preset.id))}
+            onClick={() => onChange(cloneLayoutPreset(preset.id, layout.customShortcuts))}
           >
             <i className="settings-activity-chip__dot" aria-hidden="true" />
             <span>{preset.label}</span>
@@ -180,7 +182,7 @@ export default function LayoutEditor({ language, layout, onChange }: LayoutEdito
           type="button"
           className="layout-editor__reset"
           title={localize(language, 'Reset layout ke default', 'Reset layout to default')}
-          onClick={() => onChange(cloneLayoutPreset('balanced'))}
+          onClick={() => onChange(cloneLayoutPreset('balanced', layout.customShortcuts))}
         >
           <RotateCcw size={11} />
         </button>
@@ -214,6 +216,65 @@ export default function LayoutEditor({ language, layout, onChange }: LayoutEdito
             launcherLabels,
             (launcherItems) => onChange({ ...layout, preset: 'custom', launcherItems })
           )}
+          <div className="layout-editor__shortcuts">
+            <span className="layout-editor__sublabel">{localize(language, 'Shortcut Kustom (App / URL)', 'Custom Shortcuts (App / URL)')}</span>
+            <form
+              className="layout-editor__shortcut-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const label = shortcutLabel.trim();
+                const target = shortcutTarget.trim();
+                if (!label || !target) return;
+                onChange({
+                  ...layout,
+                  preset: 'custom',
+                  customShortcuts: [
+                    ...layout.customShortcuts,
+                    { id: `sc-${Date.now()}`, label, target }
+                  ].slice(0, 8)
+                });
+                setShortcutLabel('');
+                setShortcutTarget('');
+              }}
+            >
+              <input
+                type="text"
+                value={shortcutLabel}
+                placeholder={localize(language, 'Nama (misal YouTube)', 'Label (e.g. YouTube)')}
+                onChange={(event) => setShortcutLabel(event.target.value)}
+              />
+              <input
+                type="text"
+                value={shortcutTarget}
+                placeholder="https://... / C:\app.exe"
+                onChange={(event) => setShortcutTarget(event.target.value)}
+              />
+              <button type="submit" disabled={!shortcutLabel.trim() || !shortcutTarget.trim()} aria-label={localize(language, 'Tambah shortcut', 'Add shortcut')}>
+                <Plus size={12} />
+              </button>
+            </form>
+            {layout.customShortcuts.length > 0 && (
+              <div className="layout-editor__list">
+                {layout.customShortcuts.map((shortcut) => (
+                  <div key={shortcut.id} className="layout-editor__row">
+                    <span className="layout-editor__name" title={shortcut.target}>{shortcut.label}</span>
+                    <button
+                      type="button"
+                      className="layout-editor__btn"
+                      title={localize(language, 'Hapus shortcut', 'Remove shortcut')}
+                      onClick={() => onChange({
+                        ...layout,
+                        preset: 'custom',
+                        customShortcuts: layout.customShortcuts.filter((item) => item.id !== shortcut.id)
+                      })}
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </>
       )}
 

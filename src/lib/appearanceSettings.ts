@@ -2,17 +2,26 @@ import { readAppSetting, saveAppSetting } from './storage';
 
 export const WINDHAWK_SETTINGS_KEY = 'di-windhawk-settings';
 
-export type PetStyle = 'none' | 'luffy' | 'ghost' | 'bot';
+export type PetStyle = 'none' | 'luffy' | 'ghost' | 'bot' | 'custom';
 export type IslandShapeStyle = 'default' | 'w11' | 'notch' | 'capsule' | 'sharp' | 'cyber';
+export type ClockFormat = '24h' | '12h';
+export type DateFormatStyle = 'short' | 'numeric' | 'full';
+export type AnimationSpeed = 'snappy' | 'normal' | 'smooth' | 'off';
 
 export const WINDHAWK_SETTINGS_DEFAULTS = {
   appearance: {
     shapeStyle: 'default',
     sizeScale: '1.0',
     petStyle: 'luffy',
+    customPetImage: '',
     petIdleMinutes: 10,
     edgeOffset: 0,
     autoHideFullscreen: true,
+    clockFormat: '24h',
+    showSeconds: false,
+    dateFormat: 'short',
+    animationSpeed: 'normal',
+    noticeDurationSec: 4,
     panelWidth: 368,
     panelHeight: 332
   },
@@ -22,6 +31,11 @@ export const WINDHAWK_SETTINGS_DEFAULTS = {
     textScale: 100,
     fontFamily: '',
     textColorOverride: '',
+    bgGradientEnabled: false,
+    bgGradientTo: '#1e293b',
+    borderGlowEnabled: false,
+    borderGlowColor: '#60a5fa',
+    musicReactiveGlow: false,
     contourBorderHex: '#1E1E22',
     pillBgColor: '#08080A',
     textPrimaryColor: '#FFFFFF'
@@ -33,9 +47,15 @@ export type WindhawkSettings = {
     shapeStyle: IslandShapeStyle;
     sizeScale: '0.8' | '1.0' | '1.2' | '1.5' | '1.8' | '2.0' | '2.5';
     petStyle: PetStyle;
+    customPetImage: string;
     petIdleMinutes: number;
     edgeOffset: number;
     autoHideFullscreen: boolean;
+    clockFormat: ClockFormat;
+    showSeconds: boolean;
+    dateFormat: DateFormatStyle;
+    animationSpeed: AnimationSpeed;
+    noticeDurationSec: number;
     panelWidth: number;
     panelHeight: number;
   };
@@ -45,6 +65,11 @@ export type WindhawkSettings = {
     textScale: number;
     fontFamily: string;
     textColorOverride: string;
+    bgGradientEnabled: boolean;
+    bgGradientTo: string;
+    borderGlowEnabled: boolean;
+    borderGlowColor: string;
+    musicReactiveGlow: boolean;
     contourBorderHex: string;
     pillBgColor: string;
     textPrimaryColor: string;
@@ -72,7 +97,7 @@ export function mergeSettings<T>(defaults: T, stored: unknown): T {
 export function readWindhawkSettings(): WindhawkSettings {
   const stored = readAppSetting<unknown>(WINDHAWK_SETTINGS_KEY, null);
   const merged = mergeSettings<WindhawkSettings>(WINDHAWK_SETTINGS_DEFAULTS, stored);
-  const validPets: PetStyle[] = ['none', 'luffy', 'ghost', 'bot'];
+  const validPets: PetStyle[] = ['none', 'luffy', 'ghost', 'bot', 'custom'];
   if (!validPets.includes(merged.appearance.petStyle)) {
     merged.appearance.petStyle = 'luffy';
   }
