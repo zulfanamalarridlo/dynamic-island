@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ExternalLink } from 'lucide-react';
-import { localize, type AppLanguage } from './i18n';
+import { localize, type AppLanguage } from '../lib/i18n';
 
 interface LyricsPanelProps {
   title: string;

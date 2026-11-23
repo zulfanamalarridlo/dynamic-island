@@ -1,4 +1,4 @@
-import type { MediaProvider } from './types';
+import type { MediaProvider } from '../types';
 
 export function getMediaProvider(sourceApp: string): MediaProvider | null {
   const source = sourceApp.toLowerCase();

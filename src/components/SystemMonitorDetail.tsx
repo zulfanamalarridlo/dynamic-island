@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Activity, Battery, BatteryCharging, Cpu, HardDrive, Pin, Wifi, X } from 'lucide-react';
 import { m } from 'framer-motion';
-import { localize, type AppLanguage } from '../i18n';
+import { localize, type AppLanguage } from '../lib/i18n';
 
 interface SystemMonitorDetailProps {
   language: AppLanguage;
@@ -29,11 +29,17 @@ interface MetricCardProps {
   detail: string;
   percentage: number;
   color: string;
+  index: number;
 }
 
-function MetricCard({ icon, label, value, detail, percentage, color }: MetricCardProps) {
+function MetricCard({ icon, label, value, detail, percentage, color, index }: MetricCardProps) {
   return (
-    <article className="system-monitor__metric">
+    <m.article
+      className="system-monitor__metric"
+      initial={{ opacity: 0, y: 6, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.24, delay: index * 0.045, ease: [0.22, 1, 0.36, 1] }}
+    >
       <div className="system-monitor__metric-heading">
         <span className="system-monitor__metric-icon" style={{ color }}>{icon}</span>
         <span>{label}</span>
@@ -43,7 +49,7 @@ function MetricCard({ icon, label, value, detail, percentage, color }: MetricCar
       <span className="system-monitor__meter" aria-hidden="true">
         <span style={{ width: `${percentage}%`, backgroundColor: color }} />
       </span>
-    </article>
+    </m.article>
   );
 }
 
@@ -113,6 +119,7 @@ export default function SystemMonitorDetail({
       </header>
       <div className="system-monitor__grid">
         <MetricCard
+          index={0}
           icon={<Cpu size={15} />}
           label="CPU"
           value={safeCpuUsage === null ? '—' : `${Math.round(safeCpuUsage)}%`}
@@ -121,6 +128,7 @@ export default function SystemMonitorDetail({
           color="#8db7ff"
         />
         <MetricCard
+          index={1}
           icon={<HardDrive size={15} />}
           label="RAM"
           value={memoryUsedBytes === null || memoryTotalBytes === null
@@ -131,6 +139,7 @@ export default function SystemMonitorDetail({
           color="#c6a2ff"
         />
         <MetricCard
+          index={2}
           icon={batteryCharging ? <BatteryCharging size={15} /> : <Battery size={15} />}
           label={localize(language, 'Baterai', 'Battery')}
           value={batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}
@@ -141,6 +150,7 @@ export default function SystemMonitorDetail({
           color={batteryColor}
         />
         <MetricCard
+          index={3}
           icon={<Wifi size={15} />}
           label={localize(language, 'Jaringan', 'Network')}
           value={isWifiConnected

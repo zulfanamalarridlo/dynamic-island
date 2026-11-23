@@ -1,11 +1,17 @@
-import { readAppSetting, saveAppSetting } from './settings';
+import { readAppSetting, saveAppSetting } from './storage';
 
 export const WINDHAWK_SETTINGS_KEY = 'di-windhawk-settings';
+
+export type PetStyle = 'none' | 'luffy' | 'ghost' | 'bot';
 
 export const WINDHAWK_SETTINGS_DEFAULTS = {
   appearance: {
     shapeStyle: 'default',
-    sizeScale: '1.0'
+    sizeScale: '1.0',
+    petStyle: 'luffy',
+    petIdleMinutes: 10,
+    panelWidth: 368,
+    panelHeight: 332
   },
   themes: {
     themePreset: 'obsidian',
@@ -22,6 +28,10 @@ export type WindhawkSettings = {
   appearance: {
     shapeStyle: 'default' | 'w11' | 'notch';
     sizeScale: '0.8' | '1.0' | '1.2' | '1.5' | '1.8' | '2.0' | '2.5';
+    petStyle: PetStyle;
+    petIdleMinutes: number;
+    panelWidth: number;
+    panelHeight: number;
   };
   themes: {
     themePreset: 'obsidian' | 'graphite' | 'slate' | 'nord' | 'evergreen' | 'espresso' | 'plum' | 'porcelain' | 'custom';
@@ -54,7 +64,12 @@ export function mergeSettings<T>(defaults: T, stored: unknown): T {
 
 export function readWindhawkSettings(): WindhawkSettings {
   const stored = readAppSetting<unknown>(WINDHAWK_SETTINGS_KEY, null);
-  return mergeSettings<WindhawkSettings>(WINDHAWK_SETTINGS_DEFAULTS, stored);
+  const merged = mergeSettings<WindhawkSettings>(WINDHAWK_SETTINGS_DEFAULTS, stored);
+  const validPets: PetStyle[] = ['none', 'luffy', 'ghost', 'bot'];
+  if (!validPets.includes(merged.appearance.petStyle)) {
+    merged.appearance.petStyle = 'luffy';
+  }
+  return merged;
 }
 
 export function saveWindhawkSettings(settings: WindhawkSettings): void {

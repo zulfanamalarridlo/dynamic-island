@@ -3,13 +3,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimatePresence, domAnimation, LazyMotion, m } from 'framer-motion';
-import { Battery, BatteryCharging, Cpu, HardDrive, Music2, Wifi } from 'lucide-react';
-import ToolsPanel, { type ClipboardItem } from './ToolsPanel';
-import { localize, readAppLanguage, type AppLanguage } from './i18n';
-import { readAppSetting, saveAppSetting } from './settings';
-import { readWindhawkSettings, saveWindhawkSettings } from './windhawkSettings';
-import { getMediaProvider } from './mediaUtils';
+import { Battery, BatteryCharging, Camera, Cpu, HardDrive, Mic, Music2, Wifi } from 'lucide-react';
+import ToolsPanel, { type ClipboardItem } from './components/ToolsPanel';
+import { localize, readAppLanguage, type AppLanguage } from './lib/i18n';
+import { readAppSetting, saveAppSetting } from './lib/storage';
+import { readWindhawkSettings, saveWindhawkSettings } from './lib/appearanceSettings';
+import { getMediaProvider } from './lib/media';
 import AutoNoticeCard from './components/AutoNoticeCard';
+import IslandPet from './components/IslandPet';
 import Launcher from './components/Launcher';
 import { ACTIVITY_MODULE_DEFAULTS, type ActivityModule, type ActivityModuleSettings, type AutoNotice, type BatteryInfo, type SysData } from './types';
 import './App.css';
@@ -79,7 +80,12 @@ export default function DynamicIsland() {
     media: null,
     cpuUsage: null,
     memoryUsedBytes: null,
-    memoryTotalBytes: null
+    memoryTotalBytes: null,
+    cameraActive: false,
+    cameraApp: null,
+    micInUse: false,
+    micApp: null,
+    pcIdleSeconds: 0
   });
 
   const [islandMode, setIslandMode] = useState<IslandMode>('idle');
@@ -524,19 +530,28 @@ export default function DynamicIsland() {
     ? mediaArtwork
     : null;
   const isSidePosition = islandPosition !== 0;
-  const topPanelWidth = Math.max(0, Math.min(368, viewport.width - 24));
-  const sideWidth = Math.max(0, Math.min(252, Math.max(210, viewport.width * 0.22), viewport.width - 24));
-  const sideHeight = Math.max(0, Math.min(410, viewport.height - 24));
+  const customPanelWidth = Number.isFinite(windhawkSettings.appearance.panelWidth)
+    ? Math.min(560, Math.max(300, windhawkSettings.appearance.panelWidth))
+    : 368;
+  const customPanelHeight = Number.isFinite(windhawkSettings.appearance.panelHeight)
+    ? Math.min(520, Math.max(240, windhawkSettings.appearance.panelHeight))
+    : 332;
+  const topPanelWidth = Math.max(0, Math.min(customPanelWidth, viewport.width - 24));
+  const sideWidth = Math.max(0, Math.min(Math.round(customPanelWidth * 0.7), Math.max(210, viewport.width * 0.22), viewport.width - 24));
+  const sideHeight = Math.max(0, Math.min(Math.round(customPanelHeight * 1.22), viewport.height - 24));
   const sideLauncherHeight = Math.min(232, sideHeight);
   const hasPinnedIdleContent = mediaPinned || monitorPinned;
+  const hasPet = windhawkSettings.appearance.petStyle !== 'none';
+  const hasPrivacyAlert = Boolean(sysData.cameraActive || sysData.micInUse);
+  const privacyExtraWidth = hasPrivacyAlert ? (sysData.cameraActive && sysData.micInUse ? 34 : 20) : 0;
   const idleWidth = isSidePosition
-    ? Math.min(sideWidth, hasPinnedIdleContent ? 224 : 60)
-    : Math.min(topPanelWidth, hasPinnedIdleContent
-      ? mediaPinned && monitorPinned ? 368 : mediaPinned ? 260 : 320
-      : 204);
+    ? Math.min(sideWidth, hasPinnedIdleContent ? 216 : 60)
+    : Math.min(topPanelWidth, (hasPinnedIdleContent
+      ? mediaPinned && monitorPinned ? 388 : mediaPinned ? 276 : 332
+      : hasPet ? 228 : 204) + privacyExtraWidth);
   const idleHeight = isSidePosition
-    ? monitorPinned ? mediaPinned ? Math.min(316, sideHeight) : Math.min(256, sideHeight) : mediaPinned ? 124 : 118
-    : monitorPinned ? 64 : mediaPinned ? 46 : 38;
+    ? monitorPinned ? mediaPinned ? Math.min(236, sideHeight) : Math.min(186, sideHeight) : mediaPinned ? 116 : 118
+    : monitorPinned ? 46 : mediaPinned ? 44 : 38;
 
   const islandVariants = {
     idle: {
@@ -553,10 +568,10 @@ export default function DynamicIsland() {
       borderRadius: 14,
     },
     autoNotice: {
-      width: isSidePosition ? Math.min(236, sideWidth) : Math.min(332, topPanelWidth),
+      width: isSidePosition ? Math.min(232, sideWidth) : Math.min(316, topPanelWidth),
       height: isSidePosition
-        ? (autoNotice?.volumeLevel !== undefined ? Math.min(148, sideHeight) : Math.min(118, sideHeight))
-        : (autoNotice?.volumeLevel !== undefined ? 74 : 62),
+        ? (autoNotice?.volumeLevel !== undefined ? Math.min(126, sideHeight) : Math.min(104, sideHeight))
+        : (autoNotice?.volumeLevel !== undefined ? 64 : 54),
       borderRadius: 14,
     },
     mediaDetail: {
@@ -573,7 +588,7 @@ export default function DynamicIsland() {
     },
     tools: {
       width: isSidePosition ? sideWidth : topPanelWidth,
-      height: isSidePosition ? sideHeight : Math.min(332, viewport.height - 24),
+      height: isSidePosition ? sideHeight : Math.min(customPanelHeight, viewport.height - 24),
       borderRadius: 16,
     }
   };
@@ -667,6 +682,33 @@ export default function DynamicIsland() {
               exit={{ opacity: 0, scale: 0.99 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             >
+              <IslandPet
+                style={windhawkSettings.appearance.petStyle}
+                isPlaying={Boolean(sysData.media?.is_playing)}
+                isCharging={sysData.batteryState === 'Charging'}
+                pcIdleSeconds={sysData.pcIdleSeconds ?? 0}
+                idleThresholdMinutes={windhawkSettings.appearance.petIdleMinutes}
+              />
+              {hasPrivacyAlert && (
+                <span className="idle-privacy" aria-label={localize(language, 'Indikator privasi kamera dan mikrofon', 'Camera and microphone privacy indicator')}>
+                  {sysData.cameraActive && (
+                    <span
+                      className="idle-privacy__badge idle-privacy__badge--camera"
+                      title={localize(language, `Kamera aktif: ${sysData.cameraApp ?? 'Aplikasi'}`, `Camera in use: ${sysData.cameraApp ?? 'App'}`)}
+                    >
+                      <Camera size={11} />
+                    </span>
+                  )}
+                  {sysData.micInUse && (
+                    <span
+                      className="idle-privacy__badge idle-privacy__badge--mic"
+                      title={localize(language, `Mikrofon aktif: ${sysData.micApp ?? 'Aplikasi'}`, `Mic in use: ${sysData.micApp ?? 'App'}`)}
+                    >
+                      <Mic size={11} />
+                    </span>
+                  )}
+                </span>
+              )}
               <button
                 className="idle-clock"
                 aria-label={localize(language, 'Buka menu', 'Open menu')}
@@ -688,19 +730,23 @@ export default function DynamicIsland() {
               {mediaPinned && (
                 <button
                   type="button"
-                  className="idle-pin-card idle-pin-card--media"
+                  className={`idle-pin-card idle-pin-card--media${sysData.media?.is_playing ? ' is-playing' : ''}`}
                   disabled={!sysData.media}
                   aria-label={localize(language, 'Buka media yang disematkan', 'Open pinned media')}
                   onClick={openMediaDetail}
                 >
                   <span className={`idle-pin-card__icon${mediaArtwork ? ' idle-pin-card__icon--art' : ''}`}>
-                    {mediaArtwork ? <img src={mediaArtwork} alt="" /> : <Music2 size={16} />}
+                    {mediaArtwork ? <img src={mediaArtwork} alt="" /> : <Music2 size={14} />}
                   </span>
                   <span className="idle-pin-card__copy">
                     <strong>{sysData.media?.title || localize(language, 'Tidak ada media', 'No media')}</strong>
-                    <small>{sysData.media?.artist || localize(language, 'Sematkan musik aktif', 'Play media to show it here')}</small>
+                    <small>{sysData.media?.artist || localize(language, 'Putar musik', 'Play media')}</small>
                   </span>
-                  {sysData.media?.is_playing && <span className="idle-pin-card__playing" aria-label={localize(language, 'Sedang diputar', 'Now playing')} />}
+                  {sysData.media?.is_playing && (
+                    <span className="idle-pin-card__eq" aria-label={localize(language, 'Sedang diputar', 'Now playing')}>
+                      <i /><i /><i />
+                    </span>
+                  )}
                 </button>
               )}
               {monitorPinned ? (
@@ -710,28 +756,30 @@ export default function DynamicIsland() {
                   aria-label={localize(language, 'Buka semua metrik monitor sistem', 'Open all system monitor metrics')}
                   onClick={openSystemMonitor}
                 >
-                  <span className="idle-monitor-card__metric" title={localize(language, 'Penggunaan CPU', 'CPU usage')}>
-                    <Cpu size={13} />
+                  <span className="idle-monitor-card__metric idle-monitor-card__metric--cpu" title={localize(language, 'Penggunaan CPU', 'CPU usage')}>
+                    <Cpu size={11} />
                     <strong>{sysData.cpuUsage === null ? '—' : `${Math.round(sysData.cpuUsage)}%`}</strong>
                   </span>
-                  <span className="idle-monitor-card__metric" title={localize(language, 'Penggunaan memori', 'Memory usage')}>
-                    <HardDrive size={13} />
+                  <span className="idle-monitor-card__metric idle-monitor-card__metric--ram" title={localize(language, 'Penggunaan memori', 'Memory usage')}>
+                    <HardDrive size={11} />
                     <strong>{sysData.memoryUsedBytes !== null && sysData.memoryTotalBytes
                       ? `${Math.round(sysData.memoryUsedBytes / sysData.memoryTotalBytes * 100)}%`
                       : '—'}</strong>
                   </span>
-                  <span className="idle-monitor-card__metric" title={localize(language, 'Baterai', 'Battery')}>
-                    {sysData.batteryState === 'Charging' ? <BatteryCharging size={13} /> : <Battery size={13} />}
+                  <span
+                    className="idle-monitor-card__metric idle-monitor-card__metric--bat"
+                    style={{ color: batteryColor }}
+                    title={localize(language, 'Baterai', 'Battery')}
+                  >
+                    {sysData.batteryState === 'Charging' ? <BatteryCharging size={11} /> : <Battery size={11} />}
                     <strong>{batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}</strong>
                   </span>
                   <span
-                    className={`idle-monitor-card__metric${sysData.isWifiConnected ? ' is-connected' : ''}`}
+                    className={`idle-monitor-card__metric idle-monitor-card__metric--wifi${sysData.isWifiConnected ? ' is-connected' : ''}`}
                     title={sysData.activeWifiName || localize(language, 'Jaringan Wi-Fi', 'Wi-Fi network')}
                   >
-                    <Wifi size={13} />
-                    <strong>{sysData.isWifiConnected
-                      ? localize(language, 'Wi-Fi', 'Wi-Fi')
-                      : localize(language, 'Offline', 'Offline')}</strong>
+                    <Wifi size={11} />
+                    <strong>{sysData.isWifiConnected ? 'On' : 'Off'}</strong>
                   </span>
                 </button>
               ) : (

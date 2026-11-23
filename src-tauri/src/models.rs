@@ -186,6 +186,11 @@ pub(crate) struct SysData {
     pub(crate) cpu_usage: Option<f32>,
     pub(crate) memory_used_bytes: Option<u64>,
     pub(crate) memory_total_bytes: Option<u64>,
+    pub(crate) camera_active: bool,
+    pub(crate) camera_app: Option<String>,
+    pub(crate) mic_in_use: bool,
+    pub(crate) mic_app: Option<String>,
+    pub(crate) pc_idle_seconds: u64,
 }
 
 #[derive(Serialize, Clone, PartialEq)]

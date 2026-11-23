@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { initializeAppSettings } from "./settings";
+import { initializeAppSettings } from "./lib/storage";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("Elemen root aplikasi tidak ditemukan.");

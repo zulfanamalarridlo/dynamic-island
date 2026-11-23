@@ -48,12 +48,14 @@ use windows::Win32::System::Memory::{
 };
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use windows::Win32::System::Shutdown::LockWorkStation;
-use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use windows::Win32::System::SystemInformation::{
+    GetTickCount, GlobalMemoryStatusEx, MEMORYSTATUSEX,
+};
 use windows::Win32::System::Threading::GetSystemTimes;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    SendInput, VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_LWIN, VK_MENU, VK_NUMLOCK, VK_R, VK_S,
-    VK_SCROLL, VK_SHIFT, VK_V, VK_X,
+    GetAsyncKeyState, GetKeyState, GetLastInputInfo, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+    KEYEVENTF_KEYUP, LASTINPUTINFO, SendInput, VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_LWIN,
+    VK_MENU, VK_NUMLOCK, VK_R, VK_S, VK_SCROLL, VK_SHIFT, VK_V, VK_X,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_STYLE, GetSystemMetrics, GetWindowLongW, HWND_TOPMOST, SM_CXVIRTUALSCREEN,
@@ -1082,6 +1084,164 @@ fn save_pending_snip_capture(app: &tauri::AppHandle) -> Result<Option<String>, S
     Ok(Some(path))
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct AiChatMessage {
+    role: String,
+    content: String,
+}
+
+#[tauri::command]
+fn run_screenshot_ocr(
+    app: tauri::AppHandle,
+    image_path: Option<String>,
+) -> Result<String, String> {
+    let mut temp_file: Option<PathBuf> = None;
+    let target_path = if let Some(path) = image_path.filter(|p| !p.trim().is_empty()) {
+        PathBuf::from(path)
+    } else {
+        let main_window = app.get_webview_window("main");
+        let was_visible = main_window
+            .as_ref()
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false);
+        if was_visible {
+            if let Some(window) = main_window.as_ref() {
+                let _ = window.hide();
+            }
+            thread::sleep(Duration::from_millis(120));
+        }
+        let capture_result = capture_full_screen_bmp();
+        if was_visible {
+            if let Some(window) = main_window.as_ref() {
+                let _ = window.show();
+            }
+        }
+        let bmp_bytes = capture_result?;
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("di-ocr-{stamp}.bmp"));
+        fs::write(&path, &bmp_bytes)
+            .map_err(|error| format!("Gagal menyimpan gambar sementara OCR: {error}"))?;
+        temp_file = Some(path.clone());
+        path
+    };
+
+    let escaped_path = target_path.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+$null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
+$null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{
+    $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
+}})[0]
+function Await-WinRT($op, $resultType) {{
+    $task = $asTaskGeneric.MakeGenericMethod($resultType).Invoke($null, @($op))
+    $task.Wait()
+    return $task.Result
+}}
+$file = Await-WinRT ([Windows.Storage.StorageFile]::GetFileFromPathAsync('{escaped_path}')) ([Windows.Storage.StorageFile])
+$stream = Await-WinRT ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+$decoder = Await-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+$bitmap = Await-WinRT ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+if ($null -eq $engine) {{ throw 'Windows OCR engine tidak tersedia untuk bahasa profil saat ini' }}
+$result = Await-WinRT ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+$stream.Dispose()
+Write-Output $result.Text
+"#
+    );
+
+    let output = command_no_window("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|error| format!("Gagal menjalankan Windows OCR: {error}"))?;
+
+    if let Some(path) = temp_file {
+        let _ = fs::remove_file(path);
+    }
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "Windows OCR gagal memproses gambar".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !text.is_empty() {
+        let _ = write_clipboard_text(&text);
+    }
+    Ok(text)
+}
+
+#[tauri::command]
+async fn send_ai_chat(
+    endpoint: String,
+    api_key: String,
+    model: String,
+    messages: Vec<AiChatMessage>,
+) -> Result<String, String> {
+    let url = endpoint.trim();
+    if url.is_empty() || (!url.starts_with("http://") && !url.starts_with("https://")) {
+        return Err("URL endpoint AI tidak valid".to_string());
+    }
+    let model_name = model.trim();
+    if model_name.is_empty() {
+        return Err("Nama model AI wajib diisi".to_string());
+    }
+
+    let payload = serde_json::json!({
+        "model": model_name,
+        "messages": messages,
+    });
+
+    let mut request = http_client()
+        .post(url)
+        .header("Content-Type", "application/json")
+        .json(&payload);
+    let key = api_key.trim();
+    if !key.is_empty() {
+        request = request.header("Authorization", format!("Bearer {key}"));
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Gagal menghubungi server AI: {error}"))?;
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .map_err(|error| format!("Gagal membaca respons AI: {error}"))?;
+
+    if !status.is_success() {
+        return Err(format!("AI error ({status}): {}", body_text.chars().take(180).collect::<String>()));
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&body_text)
+        .map_err(|error| format!("Respons JSON AI tidak valid: {error}"))?;
+
+    if let Some(content) = parsed["choices"][0]["message"]["content"].as_str() {
+        return Ok(content.trim().to_string());
+    }
+    if let Some(content) = parsed["message"]["content"].as_str() {
+        return Ok(content.trim().to_string());
+    }
+    if let Some(content) = parsed["response"].as_str() {
+        return Ok(content.trim().to_string());
+    }
+
+    Err("Format respons AI tidak dikenali".to_string())
+}
+
 #[tauri::command]
 fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
     let main_window = app.get_webview_window("main");
@@ -1956,6 +2116,89 @@ fn read_memory_usage() -> Result<(u64, u64), String> {
     ))
 }
 
+fn read_pc_idle_seconds() -> u64 {
+    let mut info = LASTINPUTINFO {
+        cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+        dwTime: 0,
+    };
+    if unsafe { GetLastInputInfo(&mut info) }.as_bool() {
+        let now = unsafe { GetTickCount() };
+        let elapsed_ms = now.wrapping_sub(info.dwTime);
+        u64::from(elapsed_ms / 1000)
+    } else {
+        0
+    }
+}
+
+fn format_capability_app_name(key_path: &str) -> Option<String> {
+    let leaf = key_path.rsplit('\\').next()?.trim();
+    if leaf.is_empty() || leaf.eq_ignore_ascii_case("NonPackaged") {
+        return None;
+    }
+    let raw = if leaf.contains('#') {
+        let exe = leaf.rsplit('#').next().unwrap_or(leaf);
+        exe.strip_suffix(".exe")
+            .or_else(|| exe.strip_suffix(".EXE"))
+            .unwrap_or(exe)
+    } else {
+        let pkg = leaf.split('_').next().unwrap_or(leaf);
+        pkg.strip_prefix("Microsoft.").unwrap_or(pkg)
+    };
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let mut chars = cleaned.chars();
+    let first = chars.next()?.to_uppercase().to_string();
+    Some(format!("{first}{}", chars.as_str()))
+}
+
+fn parse_active_capability_app(reg_output: &str) -> Option<String> {
+    let mut current_key: Option<&str> = None;
+    let mut has_start = false;
+    let mut stop_is_zero = false;
+
+    for raw_line in reg_output.lines() {
+        let line = raw_line.trim();
+        if line.starts_with("HKEY_") {
+            if has_start && stop_is_zero {
+                if let Some(app) = current_key.and_then(format_capability_app_name) {
+                    return Some(app);
+                }
+            }
+            current_key = Some(line);
+            has_start = false;
+            stop_is_zero = false;
+        } else if line.starts_with("LastUsedTimeStart") {
+            let value = line.split_whitespace().last().unwrap_or_default();
+            has_start = !value.is_empty() && value != "0x0" && value != "0";
+        } else if line.starts_with("LastUsedTimeStop") {
+            let value = line.split_whitespace().last().unwrap_or_default();
+            stop_is_zero = value == "0x0" || value == "0";
+        }
+    }
+
+    if has_start && stop_is_zero {
+        return current_key.and_then(format_capability_app_name);
+    }
+    None
+}
+
+fn query_active_capability_app(capability: &str) -> Option<String> {
+    let key = format!(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\{capability}"
+    );
+    let output = command_no_window("reg")
+        .args(["query", &key, "/s"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_active_capability_app(&stdout)
+}
+
 fn start_system_monitor(app_handle: tauri::AppHandle) {
     thread::spawn(move || {
         let mut com = MonitorComState::new();
@@ -1967,6 +2210,8 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
         let mut last_battery_error: Option<String> = None;
         let mut last_payload: Option<SysData> = None;
         let mut cached_network = get_network_info();
+        let mut cached_camera_app: Option<String> = None;
+        let mut cached_mic_app: Option<String> = None;
         let mut tick: u64 = 0;
 
         loop {
@@ -2074,6 +2319,32 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 }
             }
 
+            if tick % 2 == 0 {
+                let current_camera_app = query_active_capability_app("webcam");
+                if current_camera_app.is_some() && current_camera_app != cached_camera_app {
+                    if let Some(app_name) = current_camera_app.as_deref() {
+                        emit_system_notice(
+                            &app_handle,
+                            "Camera active",
+                            &format!("{app_name} is accessing your camera."),
+                        );
+                    }
+                }
+                cached_camera_app = current_camera_app;
+
+                let current_mic_app = query_active_capability_app("microphone");
+                if current_mic_app.is_some() && current_mic_app != cached_mic_app {
+                    if let Some(app_name) = current_mic_app.as_deref() {
+                        emit_system_notice(
+                            &app_handle,
+                            "Microphone active",
+                            &format!("{app_name} is accessing your microphone."),
+                        );
+                    }
+                }
+                cached_mic_app = current_mic_app;
+            }
+
             let payload = SysData {
                 battery: battery.percentage,
                 battery_state: battery.state,
@@ -2090,6 +2361,11 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 cpu_usage,
                 memory_used_bytes,
                 memory_total_bytes,
+                camera_active: cached_camera_app.is_some(),
+                camera_app: cached_camera_app.clone(),
+                mic_in_use: cached_mic_app.is_some(),
+                mic_app: cached_mic_app.clone(),
+                pc_idle_seconds: read_pc_idle_seconds(),
             };
 
             if last_payload.as_ref() != Some(&payload) {
@@ -2292,8 +2568,18 @@ fn initialize_app_settings(app: &tauri::AppHandle) -> Result<(), String> {
 mod tests {
     use super::{
         calculate_cpu_usage, calculate_island_window_rect, encode_bmp_from_bgra,
-        parse_legacy_clickup_settings, wrap_dib_as_bmp,
+        parse_active_capability_app, parse_legacy_clickup_settings, wrap_dib_as_bmp,
     };
+
+    #[test]
+    fn detects_active_webcam_or_mic_app_from_reg_output() {
+        let sample = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam\NonPackaged\C:#Program Files#Google#Chrome#Application#chrome.exe
+    LastUsedTimeStart    REG_QWORD    0x1db4f1a2c3d4e500
+    LastUsedTimeStop    REG_QWORD    0x0
+"#;
+        assert_eq!(parse_active_capability_app(sample).as_deref(), Some("Chrome"));
+    }
 
     #[test]
     fn calculates_cpu_usage_from_idle_kernel_and_user_deltas() {
@@ -2531,6 +2817,8 @@ fn main() {
             lock_windows,
             open_snipping_tool,
             take_screenshot,
+            run_screenshot_ocr,
+            send_ai_chat,
             list_capture_files,
             delete_capture_file,
             toggle_screen_recording,

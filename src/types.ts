@@ -34,6 +34,11 @@ export interface SysData {
   cpuUsage: number | null;
   memoryUsedBytes: number | null;
   memoryTotalBytes: number | null;
+  cameraActive?: boolean;
+  cameraApp?: string | null;
+  micInUse?: boolean;
+  micApp?: string | null;
+  pcIdleSeconds?: number;
 }
 
 export interface BatteryInfo {

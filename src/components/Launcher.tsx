@@ -1,6 +1,6 @@
 import { m } from 'framer-motion';
 import { Gauge, LayoutGrid, LockKeyhole, Music2 } from 'lucide-react';
-import { localize, type AppLanguage } from '../i18n';
+import { localize, type AppLanguage } from '../lib/i18n';
 import type { MediaInfo } from '../types';
 
 interface LauncherProps {

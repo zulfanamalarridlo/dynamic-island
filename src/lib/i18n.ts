@@ -1,4 +1,4 @@
-import { readAppSetting } from './settings';
+import { readAppSetting } from './storage';
 
 export type AppLanguage = 'id' | 'en';
 

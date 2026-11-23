@@ -4,12 +4,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, m } from 'framer-motion';
 import {
-  Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, File, KeyRound, ListTodo,
-  LocateFixed, Pause, Play, Plus, RotateCcw, Scissors, Settings, Video, X
+  Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, File, KeyRound, ListTodo,
+  LocateFixed, Pause, Play, Plus, RotateCcw, ScanText, Scissors, Settings, Sparkles, Video, X
 } from 'lucide-react';
-import { localize, type AppLanguage } from './i18n';
-import { readAppSetting, saveAppSetting } from './settings';
-import type { WindhawkSettings } from './windhawkSettings';
+import AiChatTab from './AiChatTab';
+import { localize, type AppLanguage } from '../lib/i18n';
+import { readAppSetting, saveAppSetting } from '../lib/storage';
+import type { PetStyle, WindhawkSettings } from '../lib/appearanceSettings';
 
 export interface ClipboardItem {
   text: string;
@@ -109,11 +110,12 @@ interface ToolsPanelProps {
   openSettingsRequest: number;
 }
 
-type ToolTab = 'focus' | 'tasks' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
+type ToolTab = 'focus' | 'tasks' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
 
 const TABS: { id: ToolTab; label: string }[] = [
   { id: 'focus', label: 'Focus' },
   { id: 'tasks', label: 'To-do' },
+  { id: 'ai', label: 'AI' },
   { id: 'clipboard', label: 'Clipboard' },
   { id: 'shelf', label: 'Shelf' },
   { id: 'prayer', label: 'Prayer' },
@@ -310,6 +312,8 @@ export default function ToolsPanel({
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolTab>('focus');
   const [capturePaths, setCapturePaths] = useState<string[]>([]);
+  const [ocrRunning, setOcrRunning] = useState(false);
+  const [ocrText, setOcrText] = useState<string | null>(null);
 
   const isVerticalLayout = islandPosition !== 0;
   const [expandedSettings, setExpandedSettings] = useState({
@@ -683,8 +687,35 @@ export default function ToolsPanel({
     setRemaining((isBreak ? breakMinutes : focusMinutes) * 60);
   };
 
+  const runOcr = async (imagePath?: string) => {
+    if (ocrRunning) return;
+    setOcrRunning(true);
+    try {
+      const extracted = await invoke<string>('run_screenshot_ocr', {
+        imagePath: imagePath ?? null
+      });
+      if (extracted) {
+        setOcrText(extracted);
+        onNotice(
+          'OCR',
+          localize(language, 'Teks berhasil diekstrak & disalin ke clipboard', 'Text extracted & copied to clipboard')
+        );
+      } else {
+        setOcrText('');
+        onNotice(
+          'OCR',
+          localize(language, 'Tidak ada teks terdeteksi pada layar', 'No text detected on screen')
+        );
+      }
+    } catch (error) {
+      onNotice('OCR', error instanceof Error ? error.message : String(error));
+    } finally {
+      setOcrRunning(false);
+    }
+  };
+
   const tabsIcon: Record<ToolTab, ReactNode> = {
-    focus: <AlarmClock size={15} />, tasks: <ListTodo size={15} />, clipboard: <Clipboard size={15} />,
+    focus: <AlarmClock size={15} />, tasks: <ListTodo size={15} />, ai: <Sparkles size={15} />, clipboard: <Clipboard size={15} />,
     shelf: <File size={15} />, prayer: <span>☾</span>, capture: <Camera size={15} />, settings: <Settings size={15} />
   };
 
@@ -884,22 +915,51 @@ export default function ToolsPanel({
             <label className="prayer-reminder-toggle"><input type="checkbox" checked={prayerReminders} onChange={(event) => setPrayerReminders(event.target.checked)} /> {localize(language, 'Ingatkan saat waktu salat', 'Remind me at prayer times')}</label>
           </div>
         )}
+        {tab === 'ai' && (
+          <AiChatTab
+            language={language}
+            onCopy={onCopyClipboard}
+            onNotice={onNotice}
+          />
+        )}
         {tab === 'capture' && (
           <div className="tool-card capture-card">
             <div className="capture-actions">
               <button type="button" className="capture-action" onClick={onScreenshot}>
-                <Camera size={18} />
-                <span>{localize(language, 'Screenshot', 'Screenshot')}</span>
+                <Camera size={16} />
+                <span>{localize(language, 'Shot', 'Shot')}</span>
               </button>
               <button type="button" className="capture-action" onClick={onCapture}>
-                <Scissors size={18} />
+                <Scissors size={16} />
                 <span>{localize(language, 'Snip', 'Snip')}</span>
               </button>
+              <button type="button" className="capture-action" onClick={() => { void runOcr(); }} disabled={ocrRunning}>
+                <ScanText size={16} />
+                <span>{ocrRunning ? '…' : 'OCR'}</span>
+              </button>
               <button type="button" className="capture-action" onClick={onRecord}>
-                <Video size={18} className="capture-record-icon" />
-                <span>{localize(language, 'Rekam', 'Record')}</span>
+                <Video size={16} className="capture-record-icon" />
+                <span>{localize(language, 'Rekam', 'Rec')}</span>
               </button>
             </div>
+            {ocrText !== null && (
+              <div className="ocr-result">
+                <div className="ocr-result__header">
+                  <span>{localize(language, 'Hasil OCR', 'OCR Result')}</span>
+                  {ocrText && (
+                    <button
+                      type="button"
+                      className="ocr-result__copy"
+                      onClick={() => onCopyClipboard(ocrText)}
+                      title={localize(language, 'Salin hasil OCR', 'Copy OCR text')}
+                    >
+                      <Copy size={11} />
+                    </button>
+                  )}
+                </div>
+                <p>{ocrText || localize(language, 'Tidak ada teks ditemukan.', 'No text found.')}</p>
+              </div>
+            )}
             <div className="capture-shortcuts" aria-label={localize(language, 'Slot pintasan tangkapan', 'Capture shortcut slots')}>
               {capturePaths.map((path) => {
                 const fileName = path.split(/[\\/]/).pop() || path;
@@ -1034,6 +1094,48 @@ export default function ToolsPanel({
 
                   <section className="settings-section settings-position-section">
                     <label className="settings-language-field">
+                      <span>{localize(language, 'Karakter animasi', 'Animated pet')}</span>
+                      <select
+                        value={windhawkSettings.appearance.petStyle}
+                        onChange={(event) => {
+                          const value = event.target.value as PetStyle;
+                          onWindhawkSettingsChange({
+                            ...windhawkSettings,
+                            appearance: { ...windhawkSettings.appearance, petStyle: value }
+                          });
+                        }}
+                      >
+                        <option value="luffy">Luffy (One Piece)</option>
+                        <option value="ghost">{localize(language, 'Hantu lucu', 'Ghost')}</option>
+                        <option value="bot">{localize(language, 'Mini Bot', 'Mini Bot')}</option>
+                        <option value="none">{localize(language, 'Nonaktif', 'Off')}</option>
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Waktu idle pet', 'Pet idle time')}</span>
+                      <input
+                        className="settings-range"
+                        type="range"
+                        min={1}
+                        max={60}
+                        step={1}
+                        value={Math.min(60, Math.max(1, windhawkSettings.appearance.petIdleMinutes))}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, petIdleMinutes: Number(event.target.value) }
+                        })}
+                      />
+                      <small className="settings-range-value">
+                        {Math.min(60, Math.max(1, windhawkSettings.appearance.petIdleMinutes))} {localize(language, 'mnt', 'min')}
+                      </small>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
                       <span>{localize(language, 'Tema', 'Theme')}</span>
                       <select
                         value={windhawkSettings.themes.themePreset}
@@ -1080,6 +1182,44 @@ export default function ToolsPanel({
 
                   <section className="settings-section settings-position-section">
                     <label className="settings-language-field">
+                      <span>{localize(language, 'Lebar panel', 'Panel width')}</span>
+                      <input
+                        className="settings-range"
+                        type="range"
+                        min={300}
+                        max={560}
+                        step={8}
+                        value={Math.min(560, Math.max(300, windhawkSettings.appearance.panelWidth))}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, panelWidth: Number(event.target.value) }
+                        })}
+                      />
+                      <small className="settings-range-value">{Math.min(560, Math.max(300, windhawkSettings.appearance.panelWidth))}px</small>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Tinggi panel', 'Panel height')}</span>
+                      <input
+                        className="settings-range"
+                        type="range"
+                        min={240}
+                        max={520}
+                        step={8}
+                        value={Math.min(520, Math.max(240, windhawkSettings.appearance.panelHeight))}
+                        onChange={(event) => onWindhawkSettingsChange({
+                          ...windhawkSettings,
+                          appearance: { ...windhawkSettings.appearance, panelHeight: Number(event.target.value) }
+                        })}
+                      />
+                      <small className="settings-range-value">{Math.min(520, Math.max(240, windhawkSettings.appearance.panelHeight))}px</small>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
                       <span>{localize(language, 'Ukuran teks', 'Text size')}</span>
                       <input
                         className="settings-range"
@@ -1119,7 +1259,23 @@ export default function ToolsPanel({
               )}
             </section>
 
-            <p className="settings-group-label">{localize(language, 'NOTIFIKASI', 'NOTIFICATIONS')}</p>
+            <p className="settings-group-label">{localize(language, 'NOTIFIKASI & AKTIVITAS', 'NOTIFICATIONS & ACTIVITY')}</p>
+            <section className="settings-section settings-section--notifications settings-inline-toggle">
+              <label className="settings-inline-row">
+                <span className="settings-section-icon"><Bell size={13} /></span>
+                <span className="settings-section-title">
+                  <strong>{localize(language, 'Notifikasi Windows', 'Windows Notifications')}</strong>
+                  <small>{localize(language, 'Tampilkan toast dari aplikasi.', 'Show app toast alerts.')}</small>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={windowsNotificationNotices}
+                  onChange={(event) => onWindowsNotificationNoticesChange(event.target.checked)}
+                />
+              </label>
+            </section>
+
             <section className="settings-section settings-section--activity">
               <button
                 className="settings-section-toggle"
@@ -1128,64 +1284,56 @@ export default function ToolsPanel({
                 aria-controls="settings-activity-content"
                 onClick={() => setExpandedSettings((current) => ({ ...current, activity: !current.activity }))}
               >
-                <span className="settings-section-icon"><Activity size={14} /></span>
+                <span className="settings-section-icon"><Activity size={13} /></span>
                 <span className="settings-section-title">
                   <strong>Windows Activity</strong>
-                  <small>{localize(language, 'Pilih aktivitas yang ingin ditampilkan.', 'Choose which activity notices to show.')}</small>
+                  <small>{localize(language, 'Filter indikator sistem.', 'Filter system indicators.')}</small>
                 </span>
                 <span className="settings-enabled-count">
-                  {Object.values(activityModuleSettings).filter(Boolean).length} {localize(language, 'aktif', 'on')}
+                  {Object.values(activityModuleSettings).filter(Boolean).length}/{ACTIVITY_MODULES.length}
                 </span>
-                <ChevronRight className="settings-section-chevron" size={15} />
+                <ChevronRight className="settings-section-chevron" size={14} />
               </button>
               {expandedSettings.activity && (
                 <div className="settings-section-content" id="settings-activity-content">
-                  <div className="settings-list">
-                    {ACTIVITY_MODULES.map(({ id, label }) => (
-                      <label className="settings-row" key={id}>
-                        <span><strong>{getActivityModuleLabel(id, label, language)}</strong></span>
-                        <input
-                          type="checkbox"
-                          role="switch"
-                          checked={activityModuleSettings[id]}
-                          onChange={(event) => onActivityModuleSettingsChange({
-                            ...activityModuleSettings,
-                            [id]: event.target.checked
-                          })}
-                        />
-                      </label>
-                    ))}
+                  <div className="settings-activity-bar">
+                    <button
+                      type="button"
+                      className="settings-activity-bulk"
+                      onClick={() => {
+                        const allEnabled = ACTIVITY_MODULES.every(({ id }) => activityModuleSettings[id]);
+                        const next = Object.fromEntries(
+                          ACTIVITY_MODULES.map(({ id }) => [id, !allEnabled])
+                        ) as ActivityModuleSettings;
+                        onActivityModuleSettingsChange(next);
+                      }}
+                    >
+                      {ACTIVITY_MODULES.every(({ id }) => activityModuleSettings[id])
+                        ? localize(language, 'Matikan semua', 'Disable all')
+                        : localize(language, 'Aktifkan semua', 'Enable all')}
+                    </button>
                   </div>
-                </div>
-              )}
-            </section>
-
-            <section className="settings-section settings-section--notifications">
-              <button
-                className="settings-section-toggle"
-                type="button"
-                aria-expanded={expandedSettings.notifications}
-                aria-controls="settings-notifications-content"
-                onClick={() => setExpandedSettings((current) => ({ ...current, notifications: !current.notifications }))}
-              >
-                <span className="settings-section-icon"><Bell size={14} /></span>
-                <span className="settings-section-title">
-                  <strong>{localize(language, 'Notifikasi Windows', 'Windows notifications')}</strong>
-                  <small>{localize(language, 'Aktifkan notifikasi dari aplikasi Windows.', 'Show notifications from Windows apps.')}</small>
-                </span>
-                <ChevronRight className="settings-section-chevron" size={15} />
-              </button>
-              {expandedSettings.notifications && (
-                <div className="settings-section-content" id="settings-notifications-content">
-                  <label className="settings-row">
-                    <span><strong>{localize(language, 'Notifikasi aplikasi', 'App notifications')}</strong></span>
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      checked={windowsNotificationNotices}
-                      onChange={(event) => onWindowsNotificationNoticesChange(event.target.checked)}
-                    />
-                  </label>
+                  <div className="settings-activity-grid">
+                    {ACTIVITY_MODULES.map(({ id, label }) => {
+                      const enabled = activityModuleSettings[id];
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          role="switch"
+                          aria-checked={enabled}
+                          className={`settings-activity-chip${enabled ? ' is-active' : ''}`}
+                          onClick={() => onActivityModuleSettingsChange({
+                            ...activityModuleSettings,
+                            [id]: !enabled
+                          })}
+                        >
+                          <i className="settings-activity-chip__dot" aria-hidden="true" />
+                          <span>{getActivityModuleLabel(id, label, language)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </section>

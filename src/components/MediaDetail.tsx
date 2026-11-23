@@ -1,10 +1,10 @@
 import { lazy, Suspense } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 import { AlignLeft, Music2, Pause, Pin, Play, SkipBack, SkipForward, X } from 'lucide-react';
-import { localize, type AppLanguage } from '../i18n';
+import { localize, type AppLanguage } from '../lib/i18n';
 import type { MediaInfo, MediaProvider } from '../types';
 
-const LyricsPanel = lazy(() => import('../LyricsPanel'));
+const LyricsPanel = lazy(() => import('./LyricsPanel'));
 
 interface MediaDetailProps {
   media: MediaInfo;
@@ -109,15 +109,34 @@ export default function MediaDetail({
         </Suspense>
       )}
       <div className="media-detail__controls">
-        <button aria-label={localize(language, 'Lagu sebelumnya', 'Previous track')} title={localize(language, 'Lagu sebelumnya', 'Previous track')} onClick={() => onMediaAction('previous')}>
+        <m.button
+          whileHover={{ scale: 1.08 }}
+          whileTap={{ scale: 0.9 }}
+          aria-label={localize(language, 'Lagu sebelumnya', 'Previous track')}
+          title={localize(language, 'Lagu sebelumnya', 'Previous track')}
+          onClick={() => onMediaAction('previous')}
+        >
           <SkipBack size={17} />
-        </button>
-        <button className="media-detail__play" aria-label={media.is_playing ? 'Pause' : 'Play'} title={media.is_playing ? 'Pause' : 'Play'} onClick={() => onMediaAction('playPause')}>
+        </m.button>
+        <m.button
+          whileHover={{ scale: 1.08 }}
+          whileTap={{ scale: 0.9 }}
+          className="media-detail__play"
+          aria-label={media.is_playing ? 'Pause' : 'Play'}
+          title={media.is_playing ? 'Pause' : 'Play'}
+          onClick={() => onMediaAction('playPause')}
+        >
           {media.is_playing ? <Pause size={17} /> : <Play size={17} />}
-        </button>
-        <button aria-label={localize(language, 'Lagu berikutnya', 'Next track')} title={localize(language, 'Lagu berikutnya', 'Next track')} onClick={() => onMediaAction('next')}>
+        </m.button>
+        <m.button
+          whileHover={{ scale: 1.08 }}
+          whileTap={{ scale: 0.9 }}
+          aria-label={localize(language, 'Lagu berikutnya', 'Next track')}
+          title={localize(language, 'Lagu berikutnya', 'Next track')}
+          onClick={() => onMediaAction('next')}
+        >
           <SkipForward size={17} />
-        </button>
+        </m.button>
       </div>
     </m.section>
   );
