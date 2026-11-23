@@ -524,19 +524,19 @@ export default function DynamicIsland() {
     ? mediaArtwork
     : null;
   const isSidePosition = islandPosition !== 0;
-  const topPanelWidth = Math.max(0, Math.min(400, viewport.width - 24));
-  const sideWidth = Math.max(0, Math.min(290, Math.max(220, viewport.width * 0.25), viewport.width - 24));
-  const sideHeight = Math.max(0, Math.min(460, viewport.height - 24));
-  const sideLauncherHeight = Math.min(360, sideHeight);
+  const topPanelWidth = Math.max(0, Math.min(368, viewport.width - 24));
+  const sideWidth = Math.max(0, Math.min(252, Math.max(210, viewport.width * 0.22), viewport.width - 24));
+  const sideHeight = Math.max(0, Math.min(410, viewport.height - 24));
+  const sideLauncherHeight = Math.min(232, sideHeight);
   const hasPinnedIdleContent = mediaPinned || monitorPinned;
   const idleWidth = isSidePosition
-    ? Math.min(sideWidth, hasPinnedIdleContent ? 260 : 76)
+    ? Math.min(sideWidth, hasPinnedIdleContent ? 224 : 60)
     : Math.min(topPanelWidth, hasPinnedIdleContent
-      ? mediaPinned && monitorPinned ? 400 : mediaPinned ? 280 : 360
-      : 240);
+      ? mediaPinned && monitorPinned ? 368 : mediaPinned ? 260 : 320
+      : 204);
   const idleHeight = isSidePosition
-    ? monitorPinned ? mediaPinned ? Math.min(390, sideHeight) : Math.min(330, sideHeight) : mediaPinned ? 148 : 150
-    : monitorPinned ? 84 : mediaPinned ? 58 : 52;
+    ? monitorPinned ? mediaPinned ? Math.min(316, sideHeight) : Math.min(256, sideHeight) : mediaPinned ? 124 : 118
+    : monitorPinned ? 64 : mediaPinned ? 46 : 38;
 
   const islandVariants = {
     idle: {
@@ -548,33 +548,33 @@ export default function DynamicIsland() {
       borderBottomRightRadius: islandPosition === 2 ? 0 : 12,
     },
     launcher: {
-      width: isSidePosition ? sideWidth : topPanelWidth,
-      height: isSidePosition ? sideLauncherHeight : 76,
-      borderRadius: 16,
+      width: isSidePosition ? Math.min(212, sideWidth) : Math.min(340, topPanelWidth),
+      height: isSidePosition ? sideLauncherHeight : 62,
+      borderRadius: 14,
     },
     autoNotice: {
-      width: isSidePosition ? sideWidth : Math.min(360, topPanelWidth),
+      width: isSidePosition ? Math.min(236, sideWidth) : Math.min(332, topPanelWidth),
       height: isSidePosition
-        ? (autoNotice?.volumeLevel !== undefined ? Math.min(220, sideHeight) : Math.min(170, sideHeight))
-        : (autoNotice?.volumeLevel !== undefined ? 86 : 72),
+        ? (autoNotice?.volumeLevel !== undefined ? Math.min(148, sideHeight) : Math.min(118, sideHeight))
+        : (autoNotice?.volumeLevel !== undefined ? 74 : 62),
       borderRadius: 14,
     },
     mediaDetail: {
-      width: isSidePosition ? sideWidth : Math.min(370, topPanelWidth),
+      width: isSidePosition ? Math.min(238, sideWidth) : Math.min(336, topPanelWidth),
       height: isSidePosition
-        ? Math.min(showLyrics ? 390 : 300, sideHeight)
-        : (showLyrics ? 222 : 150),
-      borderRadius: 18,
+        ? Math.min(showLyrics ? 320 : 210, sideHeight)
+        : (showLyrics ? 204 : 126),
+      borderRadius: 16,
     },
     systemMonitor: {
-      width: isSidePosition ? sideWidth : Math.min(360, topPanelWidth),
-      height: isSidePosition ? Math.min(360, sideHeight) : 276,
-      borderRadius: 18,
+      width: isSidePosition ? Math.min(238, sideWidth) : Math.min(332, topPanelWidth),
+      height: isSidePosition ? Math.min(296, sideHeight) : 232,
+      borderRadius: 16,
     },
     tools: {
       width: isSidePosition ? sideWidth : topPanelWidth,
-      height: isSidePosition ? sideHeight : Math.min(360, viewport.height - 24),
-      borderRadius: 18,
+      height: isSidePosition ? sideHeight : Math.min(332, viewport.height - 24),
+      borderRadius: 16,
     }
   };
 

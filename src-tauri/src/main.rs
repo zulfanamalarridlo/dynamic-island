@@ -2476,7 +2476,7 @@ fn main() {
             window.set_always_on_top(true)?;
             window.set_resizable(false)?;
             configure_borderless_island_window(&window).map_err(std::io::Error::other)?;
-            apply_island_window_bounds(&window, 240.0, 52.0, 0).map_err(std::io::Error::other)?;
+            apply_island_window_bounds(&window, 204.0, 38.0, 0).map_err(std::io::Error::other)?;
 
             let icon = app.default_window_icon().cloned().ok_or_else(|| {
                 std::io::Error::other("Ikon aplikasi untuk system tray tidak ditemukan")
