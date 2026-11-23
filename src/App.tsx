@@ -2,7 +2,7 @@ import { lazy, Suspense, useState, useEffect, useRef, useCallback, type CSSPrope
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
-import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
+import { availableMonitors, currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimatePresence, domAnimation, LazyMotion, m } from 'framer-motion';
 import { AlarmClock, Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, LayoutGrid, Mic, Music2, Wifi } from 'lucide-react';
 import ToolsPanel, { type ClipboardItem, type FocusLiveState } from './components/ToolsPanel';
@@ -234,9 +234,22 @@ export default function DynamicIsland() {
     return () => window.clearInterval(timer);
   }, [windhawkSettings.appearance.showSeconds]);
 
+  const selectedMonitorIndex = windhawkSettings.appearance.monitorIndex >= 0
+    ? windhawkSettings.appearance.monitorIndex
+    : null;
+
   useEffect(() => {
     let active = true;
-    void currentMonitor()
+    const resolveMonitor = async () => {
+      if (selectedMonitorIndex !== null) {
+        const monitors = await availableMonitors();
+        if (monitors[selectedMonitorIndex]) {
+          return monitors[selectedMonitorIndex];
+        }
+      }
+      return currentMonitor();
+    };
+    void resolveMonitor()
       .then((monitor) => {
         if (!active || !monitor) return;
         const size = monitor.size.toLogical(monitor.scaleFactor);
@@ -248,7 +261,7 @@ export default function DynamicIsland() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [selectedMonitorIndex]);
 
   useEffect(() => saveAppSetting('di-island-position', islandPosition), [islandPosition]);
 
@@ -473,7 +486,7 @@ export default function DynamicIsland() {
   };
 
   const handleToolNotice = useCallback((title: string, body: string) => {
-    showAutoNotice({ kind: 'system', title, body });
+    showAutoNotice({ kind: 'system', title, body }, { allowOverTools: true });
   }, []);
 
   const openMediaDetail = () => {
@@ -522,13 +535,29 @@ export default function DynamicIsland() {
     }, noticeDurationMsRef.current);
   };
 
-  const showAutoNotice = (notice: AutoNotice) => {
-    if (islandModeRef.current !== 'idle' && islandModeRef.current !== 'autoNotice' && islandModeRef.current !== 'tools') return;
+  const showAutoNotice = (
+    notice: AutoNotice,
+    options?: { allowOverTools?: boolean; replaceActive?: boolean }
+  ) => {
+    const mode = islandModeRef.current;
+    if (mode !== 'idle' && mode !== 'autoNotice' && !(options?.allowOverTools && mode === 'tools')) return;
 
     const queuedNotices = autoNoticeQueue.current;
     const lastNotice = queuedNotices[queuedNotices.length - 1] ?? autoNoticeRef.current;
-    if (lastNotice?.kind === notice.kind && lastNotice.title === notice.title && lastNotice.body === notice.body) return;
-    if (islandModeRef.current === 'autoNotice') {
+    if (
+      !options?.replaceActive
+      && lastNotice?.kind === notice.kind
+      && lastNotice.title === notice.title
+      && lastNotice.body === notice.body
+    ) return;
+
+    if (mode === 'autoNotice') {
+      if (options?.replaceActive && autoNoticeRef.current?.kind === notice.kind) {
+        if (autoNoticeTimer.current) clearTimeout(autoNoticeTimer.current);
+        autoNoticeTimer.current = null;
+        showNextAutoNotice(notice);
+        return;
+      }
       autoNoticeQueue.current.push(notice);
       return;
     }
@@ -684,8 +713,12 @@ export default function DynamicIsland() {
     : Math.min(topPanelWidth, (hasPinnedIdleContent
       ? mediaPinned && monitorPinned ? 388 : mediaPinned ? 276 : 332
       : Math.max(96, baseIdleWidth)) + privacyExtraWidth + liveExtraWidth);
+  const sideFocusExtraHeight = isSidePosition && focusLive.running ? 34 : 0;
   const idleHeight = isSidePosition
-    ? monitorPinned ? mediaPinned ? Math.min(296, sideHeight) : Math.min(236, sideHeight) : mediaPinned ? 156 : 118
+    ? Math.min(
+      sideHeight,
+      (monitorPinned ? (mediaPinned ? 296 : 236) : mediaPinned ? 156 : 118) + sideFocusExtraHeight
+    )
     : monitorPinned ? 46 : mediaPinned ? 44 : 38;
 
   const edgeOffset = Number.isFinite(windhawkSettings.appearance.edgeOffset)
@@ -758,10 +791,6 @@ export default function DynamicIsland() {
     });
   }, [windhawkSettings.appearance.autoHideFullscreen]);
 
-  const selectedMonitorIndex = windhawkSettings.appearance.monitorIndex >= 0
-    ? windhawkSettings.appearance.monitorIndex
-    : null;
-
   useEffect(() => {
     void invoke('set_island_window_bounds', {
       width: targetWindowWidth,
@@ -775,6 +804,7 @@ export default function DynamicIsland() {
   }, [targetWindowWidth, targetWindowHeight, islandPosition, edgeOffset, selectedMonitorIndex]);
 
   const handleIdleWheel = (event: React.WheelEvent) => {
+    if (islandModeRef.current !== 'idle' && islandModeRef.current !== 'autoNotice') return;
     if (!windhawkSettings.appearance.scrollControlEnabled) return;
     if (event.deltaY === 0) return;
     const now = Date.now();
@@ -789,11 +819,14 @@ export default function DynamicIsland() {
         void invoke('set_display_brightness', { level: next }).catch((error) => {
           console.warn('Gagal mengatur kecerahan via scroll:', error);
         });
-        showAutoNotice({
-          kind: 'activity',
-          title: localize(language, 'Kecerahan', 'Brightness'),
-          body: `${next}%`
-        });
+        showAutoNotice(
+          {
+            kind: 'activity',
+            title: localize(language, 'Kecerahan', 'Brightness'),
+            body: `${next}%`
+          },
+          { replaceActive: true }
+        );
       };
       if (brightnessCacheRef.current !== null) {
         applyBrightness(brightnessCacheRef.current);
@@ -808,16 +841,25 @@ export default function DynamicIsland() {
     const previousVolume = Number.isFinite(sysData.volume) ? sysData.volume : 50;
     const nextVolume = Math.max(0, Math.min(100, Math.round(previousVolume + step)));
     setSysData((current) => ({ ...current, volume: nextVolume }));
+    if (previousSystemDataRef.current) {
+      previousSystemDataRef.current = {
+        ...previousSystemDataRef.current,
+        volume: nextVolume
+      };
+    }
     void invoke('set_system_volume', { level: nextVolume }).catch((error) => {
       console.warn('Gagal mengatur volume via scroll:', error);
     });
-    showAutoNotice({
-      kind: 'activity',
-      title: 'Windows Activity',
-      body: `Volume ${nextVolume}%`,
-      volumeLevel: nextVolume,
-      previousVolumeLevel: previousVolume
-    });
+    showAutoNotice(
+      {
+        kind: 'activity',
+        title: 'Windows Activity',
+        body: `Volume ${nextVolume}%`,
+        volumeLevel: nextVolume,
+        previousVolumeLevel: previousVolume
+      },
+      { replaceActive: true }
+    );
   };
 
   const hasTextColorOverride = Boolean(windhawkSettings.themes.textColorOverride.trim());
@@ -858,6 +900,7 @@ export default function DynamicIsland() {
                 borderBottomRightRadius: activeVariant.borderBottomRightRadius
               })
         }}
+        onWheel={handleIdleWheel}
         onPointerEnter={() => {
           if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
           closeDelayTimer.current = null;
@@ -892,7 +935,6 @@ export default function DynamicIsland() {
             <m.div
               key="idle"
               className={`island-idle${isSidePosition ? ' island-idle--side' : ' island-idle--top'}${hasPinnedIdleContent ? ' island-idle--pinned' : ''}`}
-              onWheel={handleIdleWheel}
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.99 }}

@@ -1,5 +1,5 @@
 import { mergeSettings, WINDHAWK_SETTINGS_DEFAULTS, type WindhawkSettings } from './appearanceSettings';
-import { LAYOUT_PRESETS, type IslandLayoutSettings } from './layoutSettings';
+import { normalizeLayoutSettings, type IslandLayoutSettings } from './layoutSettings';
 import { readAppSetting, saveAppSetting } from './storage';
 
 export interface SavedIslandProfile {
@@ -11,17 +11,32 @@ export interface SavedIslandProfile {
 
 const SAVED_PROFILES_KEY = 'di-saved-profiles';
 
+function sanitizeProfileSettings(raw: unknown): WindhawkSettings {
+  const settings = mergeSettings<WindhawkSettings>(WINDHAWK_SETTINGS_DEFAULTS, raw);
+  if (settings.appearance.petStyle !== 'luffy' && settings.appearance.petStyle !== 'custom') {
+    settings.appearance.petStyle = 'luffy';
+  }
+  return settings;
+}
+
 export function readSavedProfiles(): SavedIslandProfile[] {
   const stored = readAppSetting<unknown>(SAVED_PROFILES_KEY, []);
   if (!Array.isArray(stored)) return [];
-  return stored.filter((item): item is SavedIslandProfile => (
-    Boolean(item)
-    && typeof item === 'object'
-    && typeof (item as SavedIslandProfile).id === 'string'
-    && typeof (item as SavedIslandProfile).name === 'string'
-    && Boolean((item as SavedIslandProfile).settings)
-    && Boolean((item as SavedIslandProfile).layout)
-  ));
+  return stored
+    .filter((item): item is SavedIslandProfile => (
+      Boolean(item)
+      && typeof item === 'object'
+      && typeof (item as SavedIslandProfile).id === 'string'
+      && typeof (item as SavedIslandProfile).name === 'string'
+      && Boolean((item as SavedIslandProfile).settings)
+      && Boolean((item as SavedIslandProfile).layout)
+    ))
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      settings: sanitizeProfileSettings(item.settings),
+      layout: normalizeLayoutSettings(item.layout)
+    }));
 }
 
 export function saveProfiles(profiles: SavedIslandProfile[]): void {
@@ -42,18 +57,8 @@ export function parseConfigBundle(raw: string): {
   try {
     const parsed = JSON.parse(raw) as { settings?: unknown; layout?: unknown };
     if (!parsed || typeof parsed !== 'object') return null;
-    const settings = mergeSettings<WindhawkSettings>(WINDHAWK_SETTINGS_DEFAULTS, parsed.settings);
-    const layoutRecord = parsed.layout && typeof parsed.layout === 'object'
-      ? parsed.layout as Partial<IslandLayoutSettings>
-      : {};
-    const layout: IslandLayoutSettings = {
-      ...LAYOUT_PRESETS.balanced,
-      ...layoutRecord,
-      idleWidgets: Array.isArray(layoutRecord.idleWidgets) ? layoutRecord.idleWidgets : LAYOUT_PRESETS.balanced.idleWidgets,
-      launcherItems: Array.isArray(layoutRecord.launcherItems) ? layoutRecord.launcherItems : LAYOUT_PRESETS.balanced.launcherItems,
-      customShortcuts: Array.isArray(layoutRecord.customShortcuts) ? layoutRecord.customShortcuts : [],
-      toolsTabs: Array.isArray(layoutRecord.toolsTabs) ? layoutRecord.toolsTabs : LAYOUT_PRESETS.balanced.toolsTabs
-    };
+    const settings = sanitizeProfileSettings(parsed.settings);
+    const layout = normalizeLayoutSettings(parsed.layout);
     return { settings, layout };
   } catch {
     return null;

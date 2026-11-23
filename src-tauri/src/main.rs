@@ -59,8 +59,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_NUMLOCK, VK_S, VK_SCROLL, VK_SHIFT, VK_V, VK_X,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_STYLE, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongW,
-    GetWindowRect, HWND_TOPMOST, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
+    GWL_STYLE, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongW, GetWindowRect,
+    HWND_TOPMOST, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
     SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongW, SetWindowPos, WS_CAPTION,
     WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
@@ -135,8 +135,9 @@ fn write_settings_unlocked(settings: &AppSettings) -> Result<(), String> {
         .map_err(|error| format!("Tidak dapat menyimpan settings.json: {error}"))?;
     if let Err(rename_error) = fs::rename(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
-        fs::write(path, contents)
-            .map_err(|error| format!("Tidak dapat menyimpan settings.json: {rename_error}; {error}"))?;
+        fs::write(path, contents).map_err(|error| {
+            format!("Tidak dapat menyimpan settings.json: {rename_error}; {error}")
+        })?;
     }
     if let Ok(mut cache) = APP_SETTINGS_CACHE.lock() {
         *cache = Some(settings.clone());
@@ -693,8 +694,12 @@ fn apply_island_window_bounds(
         None
     };
     let monitor = selected_monitor
-        .or(window.primary_monitor().map_err(|error| error.to_string())?)
-        .or(window.current_monitor().map_err(|error| error.to_string())?)
+        .or(window
+            .primary_monitor()
+            .map_err(|error| error.to_string())?)
+        .or(window
+            .current_monitor()
+            .map_err(|error| error.to_string())?)
         .ok_or_else(|| "Monitor utama tidak ditemukan".to_string())?;
     let scale_factor = monitor.scale_factor().max(0.1);
     let monitor_pos = monitor.position();
@@ -1169,10 +1174,7 @@ struct AiChatMessage {
 }
 
 #[tauri::command]
-fn run_screenshot_ocr(
-    app: tauri::AppHandle,
-    image_path: Option<String>,
-) -> Result<String, String> {
+fn run_screenshot_ocr(app: tauri::AppHandle, image_path: Option<String>) -> Result<String, String> {
     let mut temp_file: Option<PathBuf> = None;
     let target_path = if let Some(path) = image_path.filter(|p| !p.trim().is_empty()) {
         PathBuf::from(path)
@@ -1301,7 +1303,10 @@ async fn send_ai_chat(
         .map_err(|error| format!("Gagal membaca respons AI: {error}"))?;
 
     if !status.is_success() {
-        return Err(format!("AI error ({status}): {}", body_text.chars().take(180).collect::<String>()));
+        return Err(format!(
+            "AI error ({status}): {}",
+            body_text.chars().take(180).collect::<String>()
+        ));
     }
 
     let parsed: serde_json::Value = serde_json::from_str(&body_text)
@@ -1617,7 +1622,11 @@ impl MonitorComState {
             let render_state = enumerator
                 .GetDefaultAudioEndpoint(eRender, eConsole)
                 .ok()
-                .and_then(|device| device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok())
+                .and_then(|device| {
+                    device
+                        .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+                        .ok()
+                })
                 .map(|endpoint| {
                     let volume = endpoint
                         .GetMasterVolumeLevelScalar()
@@ -1635,7 +1644,11 @@ impl MonitorComState {
             let mic_muted = enumerator
                 .GetDefaultAudioEndpoint(eCapture, eConsole)
                 .ok()
-                .and_then(|device| device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok())
+                .and_then(|device| {
+                    device
+                        .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+                        .ok()
+                })
                 .and_then(|endpoint| endpoint.GetMute().ok().map(|muted| muted.as_bool()))
                 .unwrap_or(false);
 
@@ -2201,7 +2214,7 @@ fn set_auto_hide_fullscreen(enabled: bool) {
     AUTO_HIDE_FULLSCREEN.store(enabled, Ordering::Relaxed);
 }
 
-fn is_other_window_fullscreen(own_hwnd: HWND) -> bool {
+fn is_other_window_fullscreen(own_hwnd: HWND, monitor_rect: Option<(i32, i32, i32, i32)>) -> bool {
     let fg = unsafe { GetForegroundWindow() };
     if fg.0 == 0 || fg == own_hwnd {
         return false;
@@ -2223,12 +2236,18 @@ fn is_other_window_fullscreen(own_hwnd: HWND) -> bool {
     if unsafe { GetWindowRect(fg, &mut rect) }.is_err() {
         return false;
     }
-    let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-    let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
-    if screen_w <= 0 || screen_h <= 0 {
+    let (mon_x, mon_y, mon_w, mon_h) = monitor_rect.unwrap_or_else(|| {
+        let w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+        let h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+        (0, 0, w, h)
+    });
+    if mon_w <= 0 || mon_h <= 0 {
         return false;
     }
-    rect.left <= 0 && rect.top <= 0 && rect.right >= screen_w && rect.bottom >= screen_h
+    rect.left <= mon_x
+        && rect.top <= mon_y
+        && rect.right >= mon_x + mon_w
+        && rect.bottom >= mon_y + mon_h
 }
 
 fn strip_partial_download_ext(file_name: &str) -> Option<String> {
@@ -2338,10 +2357,7 @@ fn parse_netstat_bytes(stdout: &str) -> Option<(u64, u64)> {
 }
 
 fn read_network_total_bytes() -> Option<(u64, u64)> {
-    let output = command_no_window("netstat")
-        .arg("-e")
-        .output()
-        .ok()?;
+    let output = command_no_window("netstat").arg("-e").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -2449,6 +2465,7 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
         let mut prev_net_bytes: Option<(Instant, u64, u64)> = None;
         let mut cached_net_speed: (Option<u64>, Option<u64>) = (None, None);
         let mut hidden_by_fullscreen = false;
+        let mut last_monitor_rect: Option<(i32, i32, i32, i32)> = None;
         let mut tick: u64 = 0;
 
         loop {
@@ -2585,8 +2602,14 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
             if let Some(main_window) = app_handle.get_webview_window("main") {
                 if let Ok(raw_hwnd) = main_window.hwnd() {
                     let own_hwnd = HWND(raw_hwnd.0 as isize);
+                    if let Ok(Some(monitor)) = main_window.current_monitor() {
+                        let pos = monitor.position();
+                        let size = monitor.size();
+                        last_monitor_rect = Some((pos.x, pos.y, size.width as i32, size.height as i32));
+                    }
                     let should_auto_hide = AUTO_HIDE_FULLSCREEN.load(Ordering::Relaxed);
-                    let other_fullscreen = should_auto_hide && is_other_window_fullscreen(own_hwnd);
+                    let other_fullscreen =
+                        should_auto_hide && is_other_window_fullscreen(own_hwnd, last_monitor_rect);
                     if other_fullscreen {
                         if !hidden_by_fullscreen && main_window.is_visible().unwrap_or(false) {
                             let _ = main_window.hide();
@@ -2602,11 +2625,7 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
             if tick % 2 == 0 {
                 let current_download = scan_active_download();
                 if let (Some(prev), None) = (cached_download.as_ref(), current_download.as_ref()) {
-                    emit_system_notice(
-                        &app_handle,
-                        "Download complete",
-                        &prev.file_name,
-                    );
+                    emit_system_notice(&app_handle, "Download complete", &prev.file_name);
                 }
                 cached_download = current_download;
 
@@ -2615,8 +2634,10 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                     if let Some((prev_time, prev_rx, prev_tx)) = prev_net_bytes {
                         let elapsed = now.duration_since(prev_time).as_secs_f64();
                         if elapsed >= 0.25 {
-                            let rx_rate = (rx.saturating_sub(prev_rx) as f64 / elapsed).round() as u64;
-                            let tx_rate = (tx.saturating_sub(prev_tx) as f64 / elapsed).round() as u64;
+                            let rx_rate =
+                                (rx.saturating_sub(prev_rx) as f64 / elapsed).round() as u64;
+                            let tx_rate =
+                                (tx.saturating_sub(prev_tx) as f64 / elapsed).round() as u64;
                             cached_net_speed = (Some(rx_rate), Some(tx_rate));
                         }
                     }
@@ -2862,7 +2883,10 @@ mod tests {
     #[test]
     fn parses_netstat_rx_and_tx_bytes() {
         let sample = "Interface Statistics\n\n                           Received            Sent\n\nBytes                    1590072488       417047830\n";
-        assert_eq!(parse_netstat_bytes(sample), Some((1_590_072_488, 417_047_830)));
+        assert_eq!(
+            parse_netstat_bytes(sample),
+            Some((1_590_072_488, 417_047_830))
+        );
     }
 
     #[test]
@@ -2884,7 +2908,10 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessMana
     LastUsedTimeStart    REG_QWORD    0x1db4f1a2c3d4e500
     LastUsedTimeStop    REG_QWORD    0x0
 "#;
-        assert_eq!(parse_active_capability_app(sample).as_deref(), Some("Chrome"));
+        assert_eq!(
+            parse_active_capability_app(sample).as_deref(),
+            Some("Chrome")
+        );
     }
 
     #[test]

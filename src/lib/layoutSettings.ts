@@ -199,10 +199,9 @@ function normalizeItemList<T extends string>(
   return result;
 }
 
-export function readLayoutSettings(): IslandLayoutSettings {
+export function normalizeLayoutSettings(raw: unknown): IslandLayoutSettings {
   const defaults = LAYOUT_PRESETS.balanced;
-  const stored = readAppSetting<unknown>(LAYOUT_SETTINGS_KEY, null);
-  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return {
       ...defaults,
       idleWidgets: defaults.idleWidgets.map((i) => ({ ...i })),
@@ -210,7 +209,7 @@ export function readLayoutSettings(): IslandLayoutSettings {
       toolsTabs: defaults.toolsTabs.map((i) => ({ ...i }))
     };
   }
-  const record = stored as Record<string, unknown>;
+  const record = raw as Record<string, unknown>;
   const preset = record.preset;
   const validPresets = ['balanced', 'minimal', 'dashboard', 'focus-mode', 'custom'];
   const cols = record.launcherColumns;
@@ -244,6 +243,11 @@ export function readLayoutSettings(): IslandLayoutSettings {
       : defaults.toolsNavLayout,
     toolsTabLabels: typeof record.toolsTabLabels === 'boolean' ? record.toolsTabLabels : defaults.toolsTabLabels
   };
+}
+
+export function readLayoutSettings(): IslandLayoutSettings {
+  const stored = readAppSetting<unknown>(LAYOUT_SETTINGS_KEY, null);
+  return normalizeLayoutSettings(stored);
 }
 
 export function saveLayoutSettings(layout: IslandLayoutSettings): void {
