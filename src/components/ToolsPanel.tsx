@@ -20,6 +20,13 @@ export interface ClipboardItem {
   timestamp: number;
 }
 
+export interface FocusLiveState {
+  running: boolean;
+  remainingSeconds: number;
+  totalSeconds: number;
+  isBreak: boolean;
+}
+
 interface ClickUpTask {
   id: string;
   name: string;
@@ -123,6 +130,7 @@ interface ToolsPanelProps {
   onLayoutSettingsChange: (layout: IslandLayoutSettings) => void;
   openSettingsRequest: number;
   openTabRequest: { tab: ToolTabId; seq: number } | null;
+  onFocusStateChange?: (state: FocusLiveState) => void;
 }
 
 type ToolTab = 'focus' | 'tasks' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
@@ -325,7 +333,7 @@ export default function ToolsPanel({
   onNotificationAppFiltersChange, onClose, onReturnToMenu, onClearClipboard,
   onRemoveShelfItem, onCopyClipboard, onNotice, onCapture, onScreenshot,
   islandPosition, onIslandPositionChange, windhawkSettings, onWindhawkSettingsChange,
-  layoutSettings, onLayoutSettingsChange, openSettingsRequest, openTabRequest
+  layoutSettings, onLayoutSettingsChange, openSettingsRequest, openTabRequest, onFocusStateChange
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolTab>('focus');
   const [capturePaths, setCapturePaths] = useState<string[]>([]);
@@ -398,6 +406,15 @@ export default function ToolsPanel({
 
   const remainingRef = useRef(remaining);
   remainingRef.current = remaining;
+
+  useEffect(() => {
+    onFocusStateChange?.({
+      running,
+      remainingSeconds: remaining,
+      totalSeconds: Math.max(1, (isBreak ? breakMinutes : focusMinutes) * 60),
+      isBreak
+    });
+  }, [running, remaining, focusMinutes, breakMinutes, isBreak, onFocusStateChange]);
 
   useEffect(() => {
     if (tab !== 'prayer' && !prayerReminders) return;

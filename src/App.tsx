@@ -4,8 +4,8 @@ import { listen } from '@tauri-apps/api/event';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { AnimatePresence, domAnimation, LazyMotion, m } from 'framer-motion';
-import { Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, LayoutGrid, Mic, Music2, Wifi } from 'lucide-react';
-import ToolsPanel, { type ClipboardItem } from './components/ToolsPanel';
+import { AlarmClock, Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, LayoutGrid, Mic, Music2, Wifi } from 'lucide-react';
+import ToolsPanel, { type ClipboardItem, type FocusLiveState } from './components/ToolsPanel';
 import { localize, readAppLanguage, type AppLanguage } from './lib/i18n';
 import { readAppSetting, saveAppSetting } from './lib/storage';
 import { readWindhawkSettings, saveWindhawkSettings } from './lib/appearanceSettings';
@@ -135,6 +135,12 @@ export default function DynamicIsland() {
   const [layoutSettings, setLayoutSettings] = useState(readLayoutSettings);
   const [openSettingsRequest, setOpenSettingsRequest] = useState(0);
   const [openTabRequest, setOpenTabRequest] = useState<{ tab: ToolTabId; seq: number } | null>(null);
+  const [focusLive, setFocusLive] = useState<FocusLiveState>({
+    running: false,
+    remainingSeconds: 25 * 60,
+    totalSeconds: 25 * 60,
+    isBreak: false
+  });
   const [viewport, setViewport] = useState(() => ({
     width: window.screen.width,
     height: window.screen.height
@@ -653,9 +659,13 @@ export default function DynamicIsland() {
   const showPetWidget = isIdleVisible('pet') && windhawkSettings.appearance.petStyle !== 'none';
   const hasPrivacyAlert = isIdleVisible('privacy') && Boolean(sysData.cameraActive || sysData.micInUse);
   const privacyExtraWidth = hasPrivacyAlert ? (sysData.cameraActive && sysData.micInUse ? 34 : 20) : 0;
-  const liveExtraWidth = isIdleVisible('live')
+  const liveExtraWidth = (isIdleVisible('live')
     ? (sysData.activeDownload ? 56 : 0) + (sysData.bluetoothDevice ? 46 : 0)
+    : 0) + (focusLive.running ? 68 : 0);
+  const focusProgress = focusLive.totalSeconds > 0
+    ? Math.max(0, Math.min(100, ((focusLive.totalSeconds - focusLive.remainingSeconds) / focusLive.totalSeconds) * 100))
     : 0;
+  const focusFormatted = `${String(Math.floor(focusLive.remainingSeconds / 60)).padStart(2, '0')}:${String(focusLive.remainingSeconds % 60).padStart(2, '0')}`;
   const visibleLauncherCount = Math.max(
     1,
     layoutSettings.launcherItems.filter((item) => item.visible).length + layoutSettings.customShortcuts.length
@@ -1024,6 +1034,24 @@ export default function DynamicIsland() {
                       </button>
                     )}
                     {nodes}
+                    {focusLive.running && (
+                      <button
+                        type="button"
+                        className={`idle-focus-pill${focusLive.isBreak ? ' is-break' : ''}`}
+                        onClick={() => openToolsTab('focus')}
+                        title={focusLive.isBreak
+                          ? localize(language, 'Istirahat sedang berjalan — klik untuk buka Focus', 'Break running — click to open Focus')
+                          : localize(language, 'Focus sedang berjalan — klik untuk buka Focus', 'Focus running — click to open Focus')}
+                      >
+                        <span className="idle-focus-pill__row">
+                          <AlarmClock size={10} />
+                          <strong>{focusFormatted}</strong>
+                        </span>
+                        <span className="idle-focus-pill__bar" aria-hidden="true">
+                          <span style={{ width: `${focusProgress}%` }} />
+                        </span>
+                      </button>
+                    )}
                   </>
                 );
               })()}
@@ -1197,6 +1225,7 @@ export default function DynamicIsland() {
             onLayoutSettingsChange={setLayoutSettings}
             openSettingsRequest={openSettingsRequest}
             openTabRequest={openTabRequest}
+            onFocusStateChange={setFocusLive}
           />
         </m.div>
       </div>

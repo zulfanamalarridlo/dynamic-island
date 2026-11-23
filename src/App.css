@@ -6133,6 +6133,72 @@ body,
   margin-left: 0;
 }
 
+/* Pomodoro Live Pill in Idle */
+.idle-focus-pill {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px 7px;
+  border: 1px solid rgba(147, 197, 253, 0.3);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.16);
+  color: #dbeafe;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.idle-focus-pill:hover {
+  border-color: rgba(147, 197, 253, 0.55);
+  background: rgba(59, 130, 246, 0.25);
+}
+
+.idle-focus-pill.is-break {
+  border-color: rgba(110, 231, 183, 0.32);
+  background: rgba(16, 185, 129, 0.16);
+  color: #d1fae5;
+}
+
+.idle-focus-pill__row {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1;
+}
+
+.idle-focus-pill__row strong {
+  font-size: 9.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.idle-focus-pill__bar {
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.idle-focus-pill__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #93c5fd;
+  transition: width 600ms linear;
+}
+
+.idle-focus-pill.is-break .idle-focus-pill__bar > span {
+  background: #6ee7b7;
+}
+
+.island-idle--side .idle-focus-pill {
+  width: 100%;
+  align-items: center;
+  padding: 3px 4px;
+}
+
 /* ============================================================
    SIGNATURE PER-SHAPE MENU STYLES (ALL 6 SHAPES)
    ============================================================ */
@@ -6954,4 +7020,70 @@ body,
 
 .island-idle--side .idle-pin-card--media .idle-pin-card__eq {
   margin-left: 0;
+}
+
+/* Pomodoro Live Pill in Idle */
+.idle-focus-pill {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px 7px;
+  border: 1px solid rgba(147, 197, 253, 0.3);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.16);
+  color: #dbeafe;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.idle-focus-pill:hover {
+  border-color: rgba(147, 197, 253, 0.55);
+  background: rgba(59, 130, 246, 0.25);
+}
+
+.idle-focus-pill.is-break {
+  border-color: rgba(110, 231, 183, 0.32);
+  background: rgba(16, 185, 129, 0.16);
+  color: #d1fae5;
+}
+
+.idle-focus-pill__row {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1;
+}
+
+.idle-focus-pill__row strong {
+  font-size: 9.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.idle-focus-pill__bar {
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.idle-focus-pill__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #93c5fd;
+  transition: width 600ms linear;
+}
+
+.idle-focus-pill.is-break .idle-focus-pill__bar > span {
+  background: #6ee7b7;
+}
+
+.island-idle--side .idle-focus-pill {
+  width: 100%;
+  align-items: center;
+  padding: 3px 4px;
 }
