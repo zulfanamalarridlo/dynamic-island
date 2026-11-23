@@ -16,6 +16,8 @@ interface SystemMonitorDetailProps {
   onTogglePin: () => void;
   isWifiConnected: boolean;
   activeWifiName: string;
+  netRxBytesPerSec: number | null;
+  netTxBytesPerSec: number | null;
   travelX: number;
   travelY: number;
   transition: { duration: number; ease: number[] };
@@ -61,10 +63,17 @@ function formatMemory(bytes: number | null, language: AppLanguage): string {
   }).format(gigabytes)} GB`;
 }
 
+function formatNetSpeed(bytesPerSec: number | null): string {
+  if (bytesPerSec === null || !Number.isFinite(bytesPerSec) || bytesPerSec < 0) return '0 B/s';
+  if (bytesPerSec >= 1024 * 1024) return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+  if (bytesPerSec >= 1024) return `${Math.round(bytesPerSec / 1024)} KB/s`;
+  return `${Math.round(bytesPerSec)} B/s`;
+}
+
 export default function SystemMonitorDetail({
   language, cpuUsage, memoryUsedBytes, memoryTotalBytes, batteryAvailable, batteryLevel,
   batteryColor, batteryCharging, pinned, onTogglePin, isWifiConnected, activeWifiName,
-  travelX, travelY, transition, onClose
+  netRxBytesPerSec, netTxBytesPerSec, travelX, travelY, transition, onClose
 }: SystemMonitorDetailProps) {
   const memoryPercentage = memoryUsedBytes !== null && memoryTotalBytes !== null && memoryTotalBytes > 0
     ? Math.min(100, Math.max(0, memoryUsedBytes / memoryTotalBytes * 100))
@@ -154,9 +163,11 @@ export default function SystemMonitorDetail({
           icon={<Wifi size={15} />}
           label={localize(language, 'Jaringan', 'Network')}
           value={isWifiConnected
-            ? localize(language, 'Terhubung', 'Connected')
+            ? (netRxBytesPerSec !== null ? `↓ ${formatNetSpeed(netRxBytesPerSec)}` : localize(language, 'Terhubung', 'Connected'))
             : localize(language, 'Offline', 'Offline')}
-          detail={activeWifiName || localize(language, 'Tidak ada jaringan Wi-Fi', 'No Wi-Fi network')}
+          detail={isWifiConnected
+            ? `${activeWifiName || 'Wi-Fi'}${netTxBytesPerSec !== null ? ` · ↑ ${formatNetSpeed(netTxBytesPerSec)}` : ''}`
+            : localize(language, 'Tidak ada jaringan Wi-Fi', 'No Wi-Fi network')}
           percentage={isWifiConnected ? 100 : 0}
           color={networkColor}
         />

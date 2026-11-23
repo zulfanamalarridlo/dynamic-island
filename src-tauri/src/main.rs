@@ -56,7 +56,7 @@ use windows::Win32::System::Threading::GetSystemTimes;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetLastInputInfo, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
     KEYEVENTF_KEYUP, LASTINPUTINFO, SendInput, VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_LWIN,
-    VK_MENU, VK_NUMLOCK, VK_R, VK_S, VK_SCROLL, VK_SHIFT, VK_V, VK_X,
+    VK_NUMLOCK, VK_S, VK_SCROLL, VK_SHIFT, VK_V, VK_X,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_STYLE, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongW,
@@ -1334,11 +1334,6 @@ fn delete_capture_file(app: tauri::AppHandle, path: String) -> Result<(), String
 }
 
 #[tauri::command]
-fn toggle_screen_recording() -> Result<(), String> {
-    send_keyboard_shortcut(&[VK_LWIN, VK_MENU], VK_R, "Win + Alt + R")
-}
-
-#[tauri::command]
 fn control_media(action: &str) -> Result<(), String> {
     unsafe {
         let _ = CoInitialize(None);
@@ -2266,6 +2261,31 @@ foreach ($d in $devs) {
     parse_bluetooth_battery_output(&String::from_utf8_lossy(&output.stdout))
 }
 
+fn parse_netstat_bytes(stdout: &str) -> Option<(u64, u64)> {
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let rx = parts[parts.len() - 2].parse::<u64>().ok();
+            let tx = parts[parts.len() - 1].parse::<u64>().ok();
+            if let (Some(rx), Some(tx)) = (rx, tx) {
+                return Some((rx, tx));
+            }
+        }
+    }
+    None
+}
+
+fn read_network_total_bytes() -> Option<(u64, u64)> {
+    let output = command_no_window("netstat")
+        .arg("-e")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_netstat_bytes(&String::from_utf8_lossy(&output.stdout))
+}
+
 fn read_pc_idle_seconds() -> u64 {
     let mut info = LASTINPUTINFO {
         cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
@@ -2364,6 +2384,8 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
         let mut cached_mic_app: Option<String> = None;
         let mut cached_download: Option<ActiveDownloadInfo> = None;
         let mut cached_bluetooth: Option<BluetoothDeviceInfo> = None;
+        let mut prev_net_bytes: Option<(Instant, u64, u64)> = None;
+        let mut cached_net_speed: (Option<u64>, Option<u64>) = (None, None);
         let mut hidden_by_fullscreen = false;
         let mut tick: u64 = 0;
 
@@ -2525,6 +2547,19 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                     );
                 }
                 cached_download = current_download;
+
+                if let Some((rx, tx)) = read_network_total_bytes() {
+                    let now = Instant::now();
+                    if let Some((prev_time, prev_rx, prev_tx)) = prev_net_bytes {
+                        let elapsed = now.duration_since(prev_time).as_secs_f64();
+                        if elapsed >= 0.25 {
+                            let rx_rate = (rx.saturating_sub(prev_rx) as f64 / elapsed).round() as u64;
+                            let tx_rate = (tx.saturating_sub(prev_tx) as f64 / elapsed).round() as u64;
+                            cached_net_speed = (Some(rx_rate), Some(tx_rate));
+                        }
+                    }
+                    prev_net_bytes = Some((now, rx, tx));
+                }
             }
 
             if tick % 15 == 0 {
@@ -2554,6 +2589,8 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 pc_idle_seconds: read_pc_idle_seconds(),
                 active_download: cached_download.clone(),
                 bluetooth_device: cached_bluetooth.clone(),
+                net_rx_bytes_per_sec: cached_net_speed.0,
+                net_tx_bytes_per_sec: cached_net_speed.1,
             };
 
             if last_payload.as_ref() != Some(&payload) {
@@ -2757,8 +2794,14 @@ mod tests {
     use super::{
         calculate_cpu_usage, calculate_island_window_rect, encode_bmp_from_bgra,
         parse_active_capability_app, parse_bluetooth_battery_output, parse_legacy_clickup_settings,
-        strip_partial_download_ext, wrap_dib_as_bmp,
+        parse_netstat_bytes, strip_partial_download_ext, wrap_dib_as_bmp,
     };
+
+    #[test]
+    fn parses_netstat_rx_and_tx_bytes() {
+        let sample = "Interface Statistics\n\n                           Received            Sent\n\nBytes                    1590072488       417047830\n";
+        assert_eq!(parse_netstat_bytes(sample), Some((1_590_072_488, 417_047_830)));
+    }
 
     #[test]
     fn parses_bluetooth_battery_and_partial_download_names() {
@@ -3024,7 +3067,6 @@ fn main() {
             send_ai_chat,
             list_capture_files,
             delete_capture_file,
-            toggle_screen_recording,
             get_clickup_config,
             save_clickup_config,
             load_app_settings,

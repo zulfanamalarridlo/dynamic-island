@@ -4310,11 +4310,11 @@ body,
    ============================================================ */
 
 .capture-actions {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .tools-panel--side .capture-actions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .ocr-result {
@@ -5649,6 +5649,11 @@ body,
   color: #c7d2fe;
 }
 
+.idle-live-pill--net {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
+}
+
 /* ============================================================
    SIGNATURE PER-SHAPE MENU STYLES (ALL 6 SHAPES)
    ============================================================ */
@@ -5986,4 +5991,9 @@ body,
 .idle-live-pill--bt {
   background: rgba(129, 140, 248, 0.18);
   color: #c7d2fe;
+}
+
+.idle-live-pill--net {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
 }

@@ -52,6 +52,8 @@ export interface SysData {
   pcIdleSeconds?: number;
   activeDownload?: ActiveDownloadInfo | null;
   bluetoothDevice?: BluetoothDeviceInfo | null;
+  netRxBytesPerSec?: number | null;
+  netTxBytesPerSec?: number | null;
 }
 
 export interface BatteryInfo {

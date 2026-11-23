@@ -207,6 +207,8 @@ pub(crate) struct SysData {
     pub(crate) pc_idle_seconds: u64,
     pub(crate) active_download: Option<ActiveDownloadInfo>,
     pub(crate) bluetooth_device: Option<BluetoothDeviceInfo>,
+    pub(crate) net_rx_bytes_per_sec: Option<u64>,
+    pub(crate) net_tx_bytes_per_sec: Option<u64>,
 }
 
 #[derive(Serialize, Clone, PartialEq)]

@@ -85,6 +85,12 @@ function readNotificationAppFilters(): Record<string, boolean> {
   return merged;
 }
 
+function formatCompactSpeed(bytesPerSec: number): string {
+  if (bytesPerSec >= 1024 * 1024) return `${(bytesPerSec / (1024 * 1024)).toFixed(1)}M`;
+  if (bytesPerSec >= 1024) return `${Math.round(bytesPerSec / 1024)}K`;
+  return `${Math.round(bytesPerSec)}B`;
+}
+
 function readIslandPosition(): IslandPosition {
   const value = readAppSetting<unknown>('di-island-position', 0);
   return value === 1 || value === 2 ? value : 0;
@@ -114,7 +120,9 @@ export default function DynamicIsland() {
     micApp: null,
     pcIdleSeconds: 0,
     activeDownload: null,
-    bluetoothDevice: null
+    bluetoothDevice: null,
+    netRxBytesPerSec: null,
+    netTxBytesPerSec: null
   });
 
   const [islandMode, setIslandMode] = useState<IslandMode>('idle');
@@ -555,7 +563,6 @@ export default function DynamicIsland() {
 
   const openSnippingTool = () => runCaptureAction('open_snipping_tool', 'Gagal membuka Snipping Tool');
   const takeScreenshot = () => runCaptureAction('take_screenshot', 'Gagal mengambil screenshot');
-  const toggleScreenRecording = () => runCaptureAction('toggle_screen_recording', 'Gagal mengontrol perekaman layar');
 
   const formattedTime = time.toLocaleTimeString(language === 'id' ? 'id-ID' : 'en-US', { hour: '2-digit', minute: '2-digit' });
   const formattedDate = time.toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US', {
@@ -863,10 +870,14 @@ export default function DynamicIsland() {
                   </span>
                   <span
                     className={`idle-monitor-card__metric idle-monitor-card__metric--wifi${sysData.isWifiConnected ? ' is-connected' : ''}`}
-                    title={sysData.activeWifiName || localize(language, 'Jaringan Wi-Fi', 'Wi-Fi network')}
+                    title={`${sysData.activeWifiName || 'Wi-Fi'} · ↓ ${formatCompactSpeed(sysData.netRxBytesPerSec ?? 0)}/s ↑ ${formatCompactSpeed(sysData.netTxBytesPerSec ?? 0)}/s`}
                   >
                     <Wifi size={11} />
-                    <strong>{sysData.isWifiConnected ? 'On' : 'Off'}</strong>
+                    <strong>
+                      {sysData.isWifiConnected
+                        ? `↓${formatCompactSpeed(sysData.netRxBytesPerSec ?? 0)} ↑${formatCompactSpeed(sysData.netTxBytesPerSec ?? 0)}`
+                        : 'Off'}
+                    </strong>
                   </span>
                 </button>
               ) : (
@@ -936,6 +947,8 @@ export default function DynamicIsland() {
                 onTogglePin={() => setMonitorPinned((pinned) => !pinned)}
                 isWifiConnected={sysData.isWifiConnected}
                 activeWifiName={sysData.activeWifiName}
+                netRxBytesPerSec={sysData.netRxBytesPerSec ?? null}
+                netTxBytesPerSec={sysData.netTxBytesPerSec ?? null}
                 travelX={sideTravel}
                 travelY={verticalTravel}
                 transition={panelTransition}
@@ -976,7 +989,6 @@ export default function DynamicIsland() {
             onNotice={handleToolNotice}
             onCapture={() => { void openSnippingTool(); }}
             onScreenshot={() => { void takeScreenshot(); }}
-            onRecord={() => { void toggleScreenRecording(); }}
             islandPosition={islandPosition}
             onIslandPositionChange={setIslandPosition}
             windhawkSettings={windhawkSettings}

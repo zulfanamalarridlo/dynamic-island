@@ -5,7 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, m } from 'framer-motion';
 import {
   Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, File, KeyRound, ListTodo,
-  LocateFixed, Palette, Pause, Play, Plus, RotateCcw, ScanText, Scissors, Settings, Smile, Sparkles, Video, X
+  LocateFixed, Palette, Pause, Play, Plus, RotateCcw, ScanText, Scissors, Settings, Smile, Sparkles, X
 } from 'lucide-react';
 import AiChatTab from './AiChatTab';
 import { localize, type AppLanguage } from '../lib/i18n';
@@ -104,7 +104,6 @@ interface ToolsPanelProps {
   onNotice: (title: string, body: string) => void;
   onCapture: () => void;
   onScreenshot: () => void;
-  onRecord: () => void;
   islandPosition: IslandPosition;
   onIslandPositionChange: (position: IslandPosition) => void;
   windhawkSettings: WindhawkSettings;
@@ -310,7 +309,7 @@ export default function ToolsPanel({
   language, onLanguageChange, clipboardItems, shelfPaths, activityModuleSettings, windowsNotificationNotices,
   notificationAppFilters, onActivityModuleSettingsChange, onWindowsNotificationNoticesChange,
   onNotificationAppFiltersChange, onClose, onReturnToMenu, onClearClipboard,
-  onRemoveShelfItem, onCopyClipboard, onNotice, onCapture, onScreenshot, onRecord,
+  onRemoveShelfItem, onCopyClipboard, onNotice, onCapture, onScreenshot,
   islandPosition, onIslandPositionChange, windhawkSettings, onWindhawkSettingsChange, openSettingsRequest
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolTab>('focus');
@@ -942,10 +941,6 @@ export default function ToolsPanel({
               <button type="button" className="capture-action" onClick={() => { void runOcr(); }} disabled={ocrRunning}>
                 <ScanText size={16} />
                 <span>{ocrRunning ? '…' : 'OCR'}</span>
-              </button>
-              <button type="button" className="capture-action" onClick={onRecord}>
-                <Video size={16} className="capture-record-icon" />
-                <span>{localize(language, 'Rekam', 'Rec')}</span>
               </button>
             </div>
             {ocrText !== null && (
