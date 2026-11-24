@@ -11,7 +11,7 @@ import AiChatTab from './AiChatTab';
 import LayoutEditor from './LayoutEditor';
 import { localize, type AppLanguage } from '../lib/i18n';
 import { readAppSetting, saveAppSetting } from '../lib/storage';
-import type { AnimationSpeed, ClockFormat, DateFormatStyle, IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
+import type { AnimationSpeed, ClickThroughMode, ClockFormat, DateFormatStyle, IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
 import type { IslandLayoutSettings, ToolTabId } from '../lib/layoutSettings';
 import { parseConfigBundle, readSavedProfiles, saveProfiles, serializeConfigBundle, type SavedIslandProfile } from '../lib/profiles';
 
@@ -40,6 +40,13 @@ interface MonitorOption {
   width: number;
   height: number;
   isPrimary: boolean;
+}
+
+interface WindowsStartupConfig {
+  enabled: boolean;
+  startHidden: boolean;
+  delaySeconds: number;
+  isDebugBuild: boolean;
 }
 
 interface ClickUpConfig {
@@ -345,13 +352,48 @@ export default function ToolsPanel({
   const [importJsonText, setImportJsonText] = useState('');
   const [showImportJson, setShowImportJson] = useState(false);
   const [monitors, setMonitors] = useState<MonitorOption[]>([]);
+  const [startupConfig, setStartupConfig] = useState<WindowsStartupConfig>({
+    enabled: false,
+    startHidden: false,
+    delaySeconds: 0,
+    isDebugBuild: false
+  });
+  const [startupBusy, setStartupBusy] = useState(false);
+  const [startupStatus, setStartupStatus] = useState('');
 
   useEffect(() => {
     if (tab !== 'settings') return;
     void invoke<MonitorOption[]>('list_monitors')
       .then((list) => setMonitors(list))
       .catch(() => {});
+    void invoke<WindowsStartupConfig>('get_windows_startup_config')
+      .then((cfg) => {
+        setStartupConfig(cfg);
+        setStartupStatus('');
+      })
+      .catch(() => {});
   }, [tab]);
+
+  const updateStartupConfig = async (next: {
+    enabled: boolean;
+    startHidden: boolean;
+    delaySeconds: number;
+  }) => {
+    setStartupBusy(true);
+    setStartupStatus('');
+    try {
+      const updated = await invoke<WindowsStartupConfig>('set_windows_startup_config', {
+        enabled: next.enabled,
+        startHidden: next.startHidden,
+        delaySeconds: next.delaySeconds
+      });
+      setStartupConfig(updated);
+    } catch (error) {
+      setStartupStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setStartupBusy(false);
+    }
+  };
 
   const resolvedNavLayout = layoutSettings.toolsNavLayout === 'auto'
     ? (islandPosition === 0 ? 'top' : islandPosition === 1 ? 'left' : 'right')
@@ -1218,6 +1260,101 @@ export default function ToolsPanel({
                         })}
                       />
                     </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Tembus klik', 'Click-through')}</span>
+                      <select
+                        value={windhawkSettings.appearance.clickThroughMode}
+                        onChange={(event) => {
+                          const value = event.target.value as ClickThroughMode;
+                          const valid: ClickThroughMode[] = ['off', 'always', 'hold-alt-pass', 'hold-alt-interact'];
+                          if (!valid.includes(value)) return;
+                          onWindhawkSettingsChange({
+                            ...windhawkSettings,
+                            appearance: { ...windhawkSettings.appearance, clickThroughMode: value }
+                          });
+                        }}
+                      >
+                        <option value="off">{localize(language, 'Mati (normal)', 'Off (normal)')}</option>
+                        <option value="hold-alt-pass">{localize(language, 'Tahan Alt → tembus ke belakang', 'Hold Alt → pass click through')}</option>
+                        <option value="hold-alt-interact">{localize(language, 'Tembus saat idle (tahan Alt untuk klik)', 'Pass on idle (hold Alt to click)')}</option>
+                        <option value="always">{localize(language, 'Selalu tembus klik', 'Always click-through')}</option>
+                      </select>
+                    </label>
+                    <div className="settings-shortcut-hints">
+                      <span><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd> {localize(language, 'Toggle tembus klik', 'Toggle click-through')}</span>
+                      <span><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> {localize(language, 'Sembunyikan / tampilkan', 'Hide / show panel')}</span>
+                    </div>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-inline-row">
+                      <span className="settings-section-title">
+                        <strong>{localize(language, 'Auto-startup Windows', 'Windows auto-startup')}</strong>
+                        <small>
+                          {startupConfig.isDebugBuild
+                            ? localize(language, 'Hanya aktif pada build rilis (mode dev dilindungi)', 'Release builds only (dev mode protected)')
+                            : localize(language, 'Jalankan otomatis saat login Windows', 'Launch automatically on Windows sign-in')}
+                        </small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        disabled={startupBusy || (startupConfig.isDebugBuild && !startupConfig.enabled)}
+                        checked={startupConfig.enabled}
+                        onChange={(event) => {
+                          void updateStartupConfig({
+                            enabled: event.target.checked,
+                            startHidden: startupConfig.startHidden,
+                            delaySeconds: startupConfig.delaySeconds
+                          });
+                        }}
+                      />
+                    </label>
+                    {startupConfig.enabled && (
+                      <>
+                        <label className="settings-inline-row" style={{ marginTop: 6 }}>
+                          <span className="settings-section-title">
+                            <strong>{localize(language, 'Mulai tersembunyi di Tray', 'Start hidden in Tray')}</strong>
+                          </span>
+                          <input
+                            type="checkbox"
+                            role="switch"
+                            disabled={startupBusy}
+                            checked={startupConfig.startHidden}
+                            onChange={(event) => {
+                              void updateStartupConfig({
+                                enabled: true,
+                                startHidden: event.target.checked,
+                                delaySeconds: startupConfig.delaySeconds
+                              });
+                            }}
+                          />
+                        </label>
+                        <label className="settings-language-field" style={{ marginTop: 6 }}>
+                          <span>{localize(language, 'Delay startup', 'Startup delay')}</span>
+                          <select
+                            disabled={startupBusy}
+                            value={startupConfig.delaySeconds}
+                            onChange={(event) => {
+                              void updateStartupConfig({
+                                enabled: true,
+                                startHidden: startupConfig.startHidden,
+                                delaySeconds: Number(event.target.value)
+                              });
+                            }}
+                          >
+                            <option value={0}>{localize(language, 'Langsung (0 dtk)', 'Immediate (0s)')}</option>
+                            <option value={3}>3 {localize(language, 'detik', 'seconds')}</option>
+                            <option value={5}>5 {localize(language, 'detik', 'seconds')}</option>
+                            <option value={10}>10 {localize(language, 'detik', 'seconds')}</option>
+                          </select>
+                        </label>
+                      </>
+                    )}
+                    {startupStatus && <p className="tool-status" style={{ marginTop: 4 }}>{startupStatus}</p>}
                   </section>
 
                   <section className="settings-section settings-position-section">

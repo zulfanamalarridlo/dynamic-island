@@ -1,4 +1,10 @@
-import { mergeSettings, WINDHAWK_SETTINGS_DEFAULTS, type WindhawkSettings } from './appearanceSettings';
+import {
+  mergeSettings,
+  WINDHAWK_SETTINGS_DEFAULTS,
+  type ClickThroughMode,
+  type PetStyle,
+  type WindhawkSettings
+} from './appearanceSettings';
 import { normalizeLayoutSettings, type IslandLayoutSettings } from './layoutSettings';
 import { readAppSetting, saveAppSetting } from './storage';
 
@@ -13,8 +19,13 @@ const SAVED_PROFILES_KEY = 'di-saved-profiles';
 
 function sanitizeProfileSettings(raw: unknown): WindhawkSettings {
   const settings = mergeSettings<WindhawkSettings>(WINDHAWK_SETTINGS_DEFAULTS, raw);
-  if (settings.appearance.petStyle !== 'luffy' && settings.appearance.petStyle !== 'custom') {
+  const validPets: PetStyle[] = ['none', 'luffy', 'ghost', 'bot', 'custom'];
+  if (!validPets.includes(settings.appearance.petStyle)) {
     settings.appearance.petStyle = 'luffy';
+  }
+  const validClickThrough: ClickThroughMode[] = ['off', 'always', 'hold-alt-pass', 'hold-alt-interact'];
+  if (!validClickThrough.includes(settings.appearance.clickThroughMode)) {
+    settings.appearance.clickThroughMode = 'off';
   }
   return settings;
 }

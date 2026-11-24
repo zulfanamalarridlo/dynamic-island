@@ -8,7 +8,7 @@ import { AlarmClock, Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download,
 import ToolsPanel, { type ClipboardItem, type FocusLiveState } from './components/ToolsPanel';
 import { localize, readAppLanguage, type AppLanguage } from './lib/i18n';
 import { readAppSetting, saveAppSetting } from './lib/storage';
-import { readWindhawkSettings, saveWindhawkSettings } from './lib/appearanceSettings';
+import { readWindhawkSettings, saveWindhawkSettings, type ClickThroughMode } from './lib/appearanceSettings';
 import { readLayoutSettings, saveLayoutSettings, type ToolTabId } from './lib/layoutSettings';
 import { getMediaProvider } from './lib/media';
 import AutoNoticeCard from './components/AutoNoticeCard';
@@ -167,6 +167,7 @@ export default function DynamicIsland() {
   const windowsNotificationNoticesRef = useRef(windowsNotificationNotices);
   const notificationAppFiltersRef = useRef(notificationAppFilters);
   const noticeDurationMsRef = useRef(4000);
+  const [clickThroughActive, setClickThroughActive] = useState(false);
   const lastWheelAtRef = useRef(0);
   const brightnessCacheRef = useRef<number | null>(null);
   const autoNoticeRef = useRef<AutoNotice | null>(null);
@@ -747,10 +748,10 @@ export default function DynamicIsland() {
       borderRadius: 14,
     },
     mediaDetail: {
-      width: isSidePosition ? Math.min(238, sideWidth) : Math.min(336, topPanelWidth),
+      width: isSidePosition ? Math.min(244, sideWidth) : Math.min(352, topPanelWidth),
       height: isSidePosition
-        ? Math.min(showLyrics ? 320 : 210, sideHeight)
-        : (showLyrics ? 204 : 126),
+        ? Math.min(showLyrics ? 348 : 228, sideHeight)
+        : (showLyrics ? 276 : 152),
       borderRadius: 16,
     },
     systemMonitor: {
@@ -790,6 +791,51 @@ export default function DynamicIsland() {
       console.error('Gagal mengatur auto-hide fullscreen:', error);
     });
   }, [windhawkSettings.appearance.autoHideFullscreen]);
+
+  useEffect(() => {
+    void invoke('set_click_through_mode', {
+      mode: windhawkSettings.appearance.clickThroughMode
+    }).catch((error: unknown) => {
+      console.error('Gagal mengatur mode tembus klik:', error);
+    });
+  }, [windhawkSettings.appearance.clickThroughMode]);
+
+  useEffect(() => {
+    void invoke('set_island_idle_state', {
+      isIdle: islandMode === 'idle'
+    }).catch((error: unknown) => {
+      console.error('Gagal menyinkronkan status idle island:', error);
+    });
+  }, [islandMode]);
+
+  useEffect(() => {
+    let active = true;
+    let unlistenState: (() => void) | null = null;
+    let unlistenMode: (() => void) | null = null;
+    void listen<boolean>('click-through-state', (event) => {
+      if (active) setClickThroughActive(Boolean(event.payload));
+    }).then((stop) => {
+      if (active) unlistenState = stop;
+      else stop();
+    }).catch(() => {});
+    void listen<string>('click-through-mode-changed', (event) => {
+      if (!active) return;
+      const next = event.payload as ClickThroughMode;
+      if (next !== 'off' && next !== 'always' && next !== 'hold-alt-pass' && next !== 'hold-alt-interact') return;
+      setWindhawkSettings((current) => ({
+        ...current,
+        appearance: { ...current.appearance, clickThroughMode: next }
+      }));
+    }).then((stop) => {
+      if (active) unlistenMode = stop;
+      else stop();
+    }).catch(() => {});
+    return () => {
+      active = false;
+      unlistenState?.();
+      unlistenMode?.();
+    };
+  }, []);
 
   useEffect(() => {
     void invoke('set_island_window_bounds', {
@@ -847,7 +893,7 @@ export default function DynamicIsland() {
         volume: nextVolume
       };
     }
-    void invoke('set_system_volume', { level: nextVolume }).catch((error) => {
+    void invoke('set_system_volume', { volume: nextVolume }).catch((error) => {
       console.warn('Gagal mengatur volume via scroll:', error);
     });
     showAutoNotice(
@@ -888,7 +934,7 @@ export default function DynamicIsland() {
     <LazyMotion features={domAnimation}>
     <div className="w-screen h-screen flex items-start justify-start overflow-hidden box-border select-none">
       <div
-        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''}${hasGradientBg ? ' island-shell--gradient' : ''}${hasBorderGlow ? ' island-shell--glow' : ''}${hasMusicGlow ? ' island-shell--music-glow' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
+        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''}${hasGradientBg ? ' island-shell--gradient' : ''}${hasBorderGlow ? ' island-shell--glow' : ''}${hasMusicGlow ? ' island-shell--music-glow' : ''}${clickThroughActive ? ' island-shell--click-through' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
         style={{
           ...islandStyle,
           ...('borderRadius' in activeVariant

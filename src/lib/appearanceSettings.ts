@@ -7,6 +7,7 @@ export type IslandShapeStyle = 'default' | 'w11' | 'notch' | 'capsule' | 'sharp'
 export type ClockFormat = '24h' | '12h';
 export type DateFormatStyle = 'short' | 'numeric' | 'full';
 export type AnimationSpeed = 'snappy' | 'normal' | 'smooth' | 'off';
+export type ClickThroughMode = 'off' | 'always' | 'hold-alt-pass' | 'hold-alt-interact';
 
 export const WINDHAWK_SETTINGS_DEFAULTS = {
   appearance: {
@@ -19,6 +20,7 @@ export const WINDHAWK_SETTINGS_DEFAULTS = {
     monitorIndex: -1,
     scrollControlEnabled: true,
     autoHideFullscreen: true,
+    clickThroughMode: 'off',
     clockFormat: '24h',
     showSeconds: false,
     dateFormat: 'short',
@@ -55,6 +57,7 @@ export type WindhawkSettings = {
     monitorIndex: number;
     scrollControlEnabled: boolean;
     autoHideFullscreen: boolean;
+    clickThroughMode: ClickThroughMode;
     clockFormat: ClockFormat;
     showSeconds: boolean;
     dateFormat: DateFormatStyle;
@@ -104,6 +107,10 @@ export function readWindhawkSettings(): WindhawkSettings {
   const validPets: PetStyle[] = ['none', 'luffy', 'ghost', 'bot', 'custom'];
   if (!validPets.includes(merged.appearance.petStyle)) {
     merged.appearance.petStyle = 'luffy';
+  }
+  const validClickThrough: ClickThroughMode[] = ['off', 'always', 'hold-alt-pass', 'hold-alt-interact'];
+  if (!validClickThrough.includes(merged.appearance.clickThroughMode)) {
+    merged.appearance.clickThroughMode = 'off';
   }
   return merged;
 }

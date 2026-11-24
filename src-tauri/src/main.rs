@@ -9,7 +9,7 @@ use std::io::Write;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -29,7 +29,10 @@ use windows::UI::Notifications::Management::{
     UserNotificationListener, UserNotificationListenerAccessStatus,
 };
 use windows::UI::Notifications::{KnownNotificationBindings, NotificationKinds};
-use windows::Win32::Foundation::{FILETIME, GlobalFree, HANDLE, HGLOBAL, HWND, RECT};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_ALREADY_EXISTS, FILETIME, GetLastError, GlobalFree, HANDLE, HGLOBAL, HWND,
+    RECT,
+};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BitBlt, CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC,
     DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC, SRCCOPY,
@@ -52,20 +55,21 @@ use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::System::SystemInformation::{
     GetTickCount, GlobalMemoryStatusEx, MEMORYSTATUSEX,
 };
-use windows::Win32::System::Threading::GetSystemTimes;
+use windows::Win32::System::Threading::{CreateMutexW, GetSystemTimes};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetLastInputInfo, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-    KEYEVENTF_KEYUP, LASTINPUTINFO, SendInput, VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_LWIN,
-    VK_NUMLOCK, VK_S, VK_SCROLL, VK_SHIFT, VK_V, VK_X,
+    KEYEVENTF_KEYUP, LASTINPUTINFO, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, SendInput,
+    VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_G, VK_LWIN, VK_MENU, VK_NUMLOCK, VK_S,
+    VK_SCROLL, VK_SHIFT, VK_SPACE, VK_V, VK_X,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_STYLE, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongW, GetWindowRect,
-    HWND_TOPMOST, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongW, SetWindowPos, WS_CAPTION,
-    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+    HWND_TOPMOST, MSG, PM_REMOVE, PeekMessageW, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongW, SetWindowPos,
+    WM_HOTKEY, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
 };
-use windows::core::ComInterface;
+use windows::core::{ComInterface, PCWSTR};
 mod models;
 use models::*;
 
@@ -75,6 +79,10 @@ static APP_SETTINGS_CACHE: Mutex<Option<AppSettings>> = Mutex::new(None);
 static PENDING_SNIP_CAPTURE: Mutex<Option<(Instant, u32)>> = Mutex::new(None);
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static AUTO_HIDE_FULLSCREEN: AtomicBool = AtomicBool::new(true);
+static CLICK_THROUGH_MODE: AtomicU8 = AtomicU8::new(0);
+static ISLAND_IS_IDLE: AtomicBool = AtomicBool::new(true);
+const HOTKEY_TOGGLE_VISIBILITY: i32 = 1;
+const HOTKEY_TOGGLE_CLICK_THROUGH: i32 = 2;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CLICKUP_API_BASE: &str = "https://api.clickup.com/api/v2";
 
@@ -2214,6 +2222,121 @@ fn set_auto_hide_fullscreen(enabled: bool) {
     AUTO_HIDE_FULLSCREEN.store(enabled, Ordering::Relaxed);
 }
 
+fn click_through_mode_to_u8(mode: &str) -> u8 {
+    match mode {
+        "always" => 1,
+        "hold-alt-pass" => 2,
+        "hold-alt-interact" => 3,
+        _ => 0,
+    }
+}
+
+fn u8_to_click_through_mode(code: u8) -> &'static str {
+    match code {
+        1 => "always",
+        2 => "hold-alt-pass",
+        3 => "hold-alt-interact",
+        _ => "off",
+    }
+}
+
+fn compute_effective_click_through(mode: u8, is_idle: bool, alt_held: bool) -> bool {
+    match mode {
+        1 => true,
+        2 => alt_held,
+        3 => is_idle && !alt_held,
+        _ => false,
+    }
+}
+
+#[tauri::command]
+fn set_click_through_mode(app: tauri::AppHandle, mode: String) {
+    let code = click_through_mode_to_u8(&mode);
+    CLICK_THROUGH_MODE.store(code, Ordering::Relaxed);
+    let is_idle = ISLAND_IS_IDLE.load(Ordering::Relaxed);
+    let alt_held = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) } < 0;
+    let pass_through = compute_effective_click_through(code, is_idle, alt_held);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_ignore_cursor_events(pass_through);
+    }
+    let _ = app.emit("click-through-state", pass_through);
+}
+
+#[tauri::command]
+fn set_island_idle_state(is_idle: bool) {
+    ISLAND_IS_IDLE.store(is_idle, Ordering::Relaxed);
+}
+
+fn toggle_click_through_from_shortcut(app: &tauri::AppHandle) {
+    let current = CLICK_THROUGH_MODE.load(Ordering::Relaxed);
+    let next = if current == 1 { 0 } else { 1 };
+    CLICK_THROUGH_MODE.store(next, Ordering::Relaxed);
+    let mode_str = u8_to_click_through_mode(next);
+    let is_idle = ISLAND_IS_IDLE.load(Ordering::Relaxed);
+    let alt_held = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) } < 0;
+    let pass_through = compute_effective_click_through(next, is_idle, alt_held);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_ignore_cursor_events(pass_through);
+    }
+    let _ = app.emit("click-through-mode-changed", mode_str);
+    let _ = app.emit("click-through-state", pass_through);
+}
+
+fn start_overlay_interaction_watcher(app_handle: tauri::AppHandle) {
+    thread::spawn(move || {
+        unsafe {
+            if let Err(error) = RegisterHotKey(
+                HWND(0),
+                HOTKEY_TOGGLE_VISIBILITY,
+                MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
+                VK_SPACE.0 as u32,
+            ) {
+                eprintln!("Gagal mendaftarkan shortcut Ctrl+Alt+Space: {error}");
+            }
+            if let Err(error) = RegisterHotKey(
+                HWND(0),
+                HOTKEY_TOGGLE_CLICK_THROUGH,
+                MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
+                VK_G.0 as u32,
+            ) {
+                eprintln!("Gagal mendaftarkan shortcut Ctrl+Alt+G: {error}");
+            }
+        }
+
+        let mut last_pass_through: Option<bool> = None;
+        let mut msg = MSG::default();
+
+        loop {
+            while unsafe { PeekMessageW(&mut msg, HWND(0), 0, 0, PM_REMOVE) }.as_bool() {
+                if msg.message == WM_HOTKEY {
+                    match msg.wParam.0 as i32 {
+                        HOTKEY_TOGGLE_VISIBILITY => toggle_window_from_tray(&app_handle),
+                        HOTKEY_TOGGLE_CLICK_THROUGH => {
+                            toggle_click_through_from_shortcut(&app_handle)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            let mode = CLICK_THROUGH_MODE.load(Ordering::Relaxed);
+            let is_idle = ISLAND_IS_IDLE.load(Ordering::Relaxed);
+            let alt_held = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) } < 0;
+            let pass_through = compute_effective_click_through(mode, is_idle, alt_held);
+
+            if last_pass_through != Some(pass_through) {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.set_ignore_cursor_events(pass_through);
+                }
+                let _ = app_handle.emit("click-through-state", pass_through);
+                last_pass_through = Some(pass_through);
+            }
+
+            thread::sleep(Duration::from_millis(40));
+        }
+    });
+}
+
 fn is_other_window_fullscreen(own_hwnd: HWND, monitor_rect: Option<(i32, i32, i32, i32)>) -> bool {
     let fg = unsafe { GetForegroundWindow() };
     if fg.0 == 0 || fg == own_hwnd {
@@ -3010,16 +3133,330 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessMana
             520
         );
     }
+
+    #[test]
+    fn computes_click_through_modes_accurately() {
+        use super::compute_effective_click_through;
+        // off
+        assert!(!compute_effective_click_through(0, true, false));
+        assert!(!compute_effective_click_through(0, true, true));
+        // always
+        assert!(compute_effective_click_through(1, true, false));
+        assert!(compute_effective_click_through(1, false, true));
+        // hold-alt-pass
+        assert!(!compute_effective_click_through(2, true, false));
+        assert!(compute_effective_click_through(2, true, true));
+        assert!(compute_effective_click_through(2, false, true));
+        // hold-alt-interact
+        assert!(compute_effective_click_through(3, true, false));
+        assert!(!compute_effective_click_through(3, true, true));
+        assert!(!compute_effective_click_through(3, false, false));
+    }
+
+    #[test]
+    fn builds_and_parses_windows_startup_command_and_args() {
+        use super::{build_startup_command, parse_startup_command, parse_startup_launch_args};
+        use std::path::Path;
+
+        let cmd = build_startup_command(Path::new(r"C:\Apps\dynamic-island.exe"), true, 5);
+        assert_eq!(
+            cmd,
+            r#""C:\Apps\dynamic-island.exe" --autostart --hidden --delay=5"#
+        );
+        assert_eq!(parse_startup_command(&cmd), (true, 5));
+
+        let cmd_plain = build_startup_command(Path::new(r"C:\Apps\dynamic-island.exe"), false, 0);
+        assert_eq!(cmd_plain, r#""C:\Apps\dynamic-island.exe" --autostart"#);
+        assert_eq!(parse_startup_command(&cmd_plain), (false, 0));
+
+        assert_eq!(
+            parse_startup_launch_args([
+                "dynamic-island.exe",
+                "--autostart",
+                "--hidden",
+                "--delay=10"
+            ]),
+            (true, true, 10)
+        );
+        assert_eq!(
+            parse_startup_launch_args(["dynamic-island.exe"]),
+            (false, false, 0)
+        );
+    }
 }
 
-fn enable_windows_startup(executable: &std::path::Path) -> Result<(), String> {
-    let command_value = format!("\"{}\"", executable.display());
+const WINDOWS_STARTUP_REG_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const WINDOWS_STARTUP_REG_VALUE: &str = "DynamicIsland";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct WindowsStartupConfig {
+    enabled: bool,
+    start_hidden: bool,
+    delay_seconds: u8,
+    is_debug_build: bool,
+}
+
+struct SingleInstanceGuard(HANDLE);
+
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+fn acquire_single_instance_guard() -> Option<SingleInstanceGuard> {
+    let mut name: Vec<u16> = "Local\\DynamicIslandSingleInstanceMutex"
+        .encode_utf16()
+        .collect();
+    name.push(0);
+    let handle = unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }.ok()?;
+    let already_exists = unsafe { GetLastError() } == Err(ERROR_ALREADY_EXISTS.into());
+    if already_exists {
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        return None;
+    }
+    Some(SingleInstanceGuard(handle))
+}
+
+fn build_startup_command(
+    executable: &std::path::Path,
+    start_hidden: bool,
+    delay_seconds: u8,
+) -> String {
+    let mut parts = vec![
+        format!("\"{}\"", executable.display()),
+        "--autostart".to_string(),
+    ];
+    if start_hidden {
+        parts.push("--hidden".to_string());
+    }
+    let delay = delay_seconds.min(30);
+    if delay > 0 {
+        parts.push(format!("--delay={delay}"));
+    }
+    parts.join(" ")
+}
+
+fn parse_startup_command(command: &str) -> (bool, u8) {
+    let start_hidden = command.contains("--hidden");
+    let delay_seconds = command
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("--delay="))
+        .and_then(|value| value.parse::<u8>().ok())
+        .map(|value| value.min(30))
+        .unwrap_or(0);
+    (start_hidden, delay_seconds)
+}
+
+fn parse_startup_launch_args<I, S>(args: I) -> (bool, bool, u8)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut is_autostart = false;
+    let mut start_hidden = false;
+    let mut delay_seconds = 0u8;
+    for arg in args {
+        let token = arg.as_ref();
+        if token == "--autostart" {
+            is_autostart = true;
+        } else if token == "--hidden" {
+            start_hidden = true;
+        } else if let Some(raw_delay) = token.strip_prefix("--delay=") {
+            if let Ok(parsed) = raw_delay.parse::<u8>() {
+                delay_seconds = parsed.min(30);
+            }
+        }
+    }
+    (is_autostart, start_hidden, delay_seconds)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LyricsPayload {
+    synced_lyrics: Option<String>,
+    plain_lyrics: Option<String>,
+    instrumental: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LrcLibItem {
+    synced_lyrics: Option<String>,
+    plain_lyrics: Option<String>,
+    #[serde(default)]
+    instrumental: bool,
+}
+
+#[tauri::command]
+async fn fetch_synced_lyrics(
+    title: String,
+    artist: String,
+    duration_seconds: f64,
+) -> Result<LyricsPayload, String> {
+    let clean_title = title.trim();
+    if clean_title.is_empty() {
+        return Err("Judul lagu kosong".to_string());
+    }
+    let clean_artist = artist.trim();
+    let client = http_client();
+
+    let mut get_params: Vec<(&str, String)> = vec![("track_name", clean_title.to_string())];
+    if !clean_artist.is_empty() {
+        get_params.push(("artist_name", clean_artist.to_string()));
+    }
+    if duration_seconds.is_finite() && duration_seconds > 10.0 {
+        get_params.push(("duration", (duration_seconds.round() as u64).to_string()));
+    }
+
+    if let Ok(response) = client
+        .get("https://lrclib.net/api/get")
+        .header("User-Agent", "DynamicIsland/0.1.0")
+        .query(&get_params)
+        .send()
+        .await
+    {
+        if response.status().is_success() {
+            if let Ok(item) = response.json::<LrcLibItem>().await {
+                if item.synced_lyrics.is_some() || item.plain_lyrics.is_some() || item.instrumental {
+                    return Ok(LyricsPayload {
+                        synced_lyrics: item.synced_lyrics,
+                        plain_lyrics: item.plain_lyrics,
+                        instrumental: item.instrumental,
+                    });
+                }
+            }
+        }
+    }
+
+    let search_query = if clean_artist.is_empty() {
+        clean_title.to_string()
+    } else {
+        format!("{clean_title} {clean_artist}")
+    };
+    let response = client
+        .get("https://lrclib.net/api/search")
+        .header("User-Agent", "DynamicIsland/0.1.0")
+        .query(&[("q", search_query)])
+        .send()
+        .await
+        .map_err(|error| format!("Gagal mengambil lirik: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err("Lirik tidak ditemukan".to_string());
+    }
+
+    let items = response
+        .json::<Vec<LrcLibItem>>()
+        .await
+        .map_err(|error| format!("Gagal membaca data lirik: {error}"))?;
+
+    let best = items
+        .iter()
+        .find(|item| item.synced_lyrics.as_deref().is_some_and(|s| !s.trim().is_empty()))
+        .or_else(|| {
+            items
+                .iter()
+                .find(|item| item.plain_lyrics.as_deref().is_some_and(|s| !s.trim().is_empty()))
+        })
+        .or_else(|| items.first());
+
+    match best {
+        Some(item) => Ok(LyricsPayload {
+            synced_lyrics: item.synced_lyrics.clone(),
+            plain_lyrics: item.plain_lyrics.clone(),
+            instrumental: item.instrumental,
+        }),
+        None => Err("Lirik tidak ditemukan".to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_windows_startup_config() -> Result<WindowsStartupConfig, String> {
+    let output = command_no_window("reg.exe")
+        .args([
+            "query",
+            WINDOWS_STARTUP_REG_KEY,
+            "/v",
+            WINDOWS_STARTUP_REG_VALUE,
+        ])
+        .output()
+        .map_err(|error| format!("Tidak dapat membaca status startup Windows: {error}"))?;
+
+    if !output.status.success() {
+        return Ok(WindowsStartupConfig {
+            enabled: false,
+            start_hidden: false,
+            delay_seconds: 0,
+            is_debug_build: cfg!(debug_assertions),
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let command_value = stdout
+        .lines()
+        .find(|line| line.contains(WINDOWS_STARTUP_REG_VALUE))
+        .and_then(|line| line.split("REG_SZ").nth(1))
+        .map(str::trim)
+        .unwrap_or("");
+    let (start_hidden, delay_seconds) = parse_startup_command(command_value);
+
+    Ok(WindowsStartupConfig {
+        enabled: true,
+        start_hidden,
+        delay_seconds,
+        is_debug_build: cfg!(debug_assertions),
+    })
+}
+
+#[tauri::command]
+fn set_windows_startup_config(
+    enabled: bool,
+    start_hidden: bool,
+    delay_seconds: u8,
+) -> Result<WindowsStartupConfig, String> {
+    let delay = delay_seconds.min(30);
+    if !enabled {
+        let _ = command_no_window("reg.exe")
+            .args([
+                "delete",
+                WINDOWS_STARTUP_REG_KEY,
+                "/v",
+                WINDOWS_STARTUP_REG_VALUE,
+                "/f",
+            ])
+            .output();
+        return Ok(WindowsStartupConfig {
+            enabled: false,
+            start_hidden,
+            delay_seconds: delay,
+            is_debug_build: cfg!(debug_assertions),
+        });
+    }
+
+    if cfg!(debug_assertions) {
+        return Err(
+            "Auto-startup dinonaktifkan pada mode dev/debug agar registry tidak tertimpa build debug."
+                .to_string(),
+        );
+    }
+
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Tidak dapat menemukan path aplikasi: {error}"))?;
+    let command_value = build_startup_command(&executable, start_hidden, delay);
     let output = command_no_window("reg.exe")
         .args([
             "add",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            WINDOWS_STARTUP_REG_KEY,
             "/v",
-            "DynamicIsland",
+            WINDOWS_STARTUP_REG_VALUE,
             "/t",
             "REG_SZ",
             "/d",
@@ -3034,14 +3471,26 @@ fn enable_windows_startup(executable: &std::path::Path) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(())
+
+    Ok(WindowsStartupConfig {
+        enabled: true,
+        start_hidden,
+        delay_seconds: delay,
+        is_debug_build: cfg!(debug_assertions),
+    })
 }
 
 fn open_settings_from_tray(app: &tauri::AppHandle) {
+    if CLICK_THROUGH_MODE.load(Ordering::Relaxed) == 1 {
+        CLICK_THROUGH_MODE.store(0, Ordering::Relaxed);
+        let _ = app.emit("click-through-mode-changed", "off");
+        let _ = app.emit("click-through-state", false);
+    }
     let Some(window) = app.get_webview_window("main") else {
         eprintln!("Tidak dapat membuka pengaturan tray: jendela utama tidak ditemukan");
         return;
     };
+    let _ = window.set_ignore_cursor_events(false);
     if let Err(error) = window.show() {
         eprintln!("Tidak dapat menampilkan jendela dari tray: {error}");
     }
@@ -3076,18 +3525,26 @@ fn toggle_window_from_tray(app: &tauri::AppHandle) {
 }
 
 fn main() {
+    let Some(_single_instance_guard) = acquire_single_instance_guard() else {
+        return;
+    };
+
+    let (is_autostart, start_hidden, delay_seconds) = parse_startup_launch_args(std::env::args());
+    if is_autostart && delay_seconds > 0 {
+        thread::sleep(Duration::from_secs(delay_seconds as u64));
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             let app_handle = app.handle().clone();
             initialize_app_settings(&app_handle).map_err(std::io::Error::other)?;
-            let executable = std::env::current_exe()?;
-            enable_windows_startup(&executable).map_err(std::io::Error::other)?;
 
             // Jalankan thread pemantauan
             start_system_monitor(app_handle.clone());
             start_clipboard_activity_monitor(app_handle.clone());
             start_windows_notification_monitor(app_handle.clone());
+            start_overlay_interaction_watcher(app_handle.clone());
 
             let window = app
                 .get_webview_window("main")
@@ -3103,15 +3560,30 @@ fn main() {
             })?;
             let settings_item =
                 MenuItem::with_id(app, "tray-settings", "Pengaturan", true, None::<&str>)?;
+            let click_through_item = MenuItem::with_id(
+                app,
+                "tray-toggle-click-through",
+                "Tembus klik (Ctrl+Alt+G)",
+                true,
+                None::<&str>,
+            )?;
             let visibility_item = MenuItem::with_id(
                 app,
                 "tray-toggle-visibility",
-                "Tampilkan / sembunyikan",
+                "Tampilkan / sembunyikan (Ctrl+Alt+Space)",
                 true,
                 None::<&str>,
             )?;
             let exit_item = MenuItem::with_id(app, "tray-exit", "Keluar", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&settings_item, &visibility_item, &exit_item])?;
+            let tray_menu = Menu::with_items(
+                app,
+                &[
+                    &settings_item,
+                    &click_through_item,
+                    &visibility_item,
+                    &exit_item,
+                ],
+            )?;
             let tray_icon = TrayIconBuilder::with_id("dynamic-island-tray")
                 .icon(icon)
                 .menu(&tray_menu)
@@ -3119,6 +3591,7 @@ fn main() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "tray-settings" => open_settings_from_tray(app),
+                    "tray-toggle-click-through" => toggle_click_through_from_shortcut(app),
                     "tray-toggle-visibility" => toggle_window_from_tray(app),
                     "tray-exit" => app.exit(0),
                     _ => {}
@@ -3127,7 +3600,9 @@ fn main() {
             if !app.manage(tray_icon) {
                 return Err(std::io::Error::other("Tidak dapat menyimpan ikon system tray").into());
             }
-            window.show()?;
+            if !start_hidden {
+                window.show()?;
+            }
 
             Ok(())
         })
@@ -3137,6 +3612,7 @@ fn main() {
             get_network_info,
             control_media,
             seek_media,
+            fetch_synced_lyrics,
             get_current_media_artwork,
             write_clipboard_text,
             get_display_brightness,
@@ -3150,6 +3626,10 @@ fn main() {
             set_island_window_bounds,
             list_monitors,
             set_auto_hide_fullscreen,
+            set_click_through_mode,
+            set_island_idle_state,
+            get_windows_startup_config,
+            set_windows_startup_config,
             lock_windows,
             open_snipping_tool,
             take_screenshot,
