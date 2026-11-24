@@ -144,7 +144,7 @@ export default function MediaDetail({
           </div>
         </div>
 
-        <div className="media-detail__actions">
+        <div className="island-action-pill">
           {hasTrackTitle && (
             <button
               type="button"

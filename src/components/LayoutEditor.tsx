@@ -67,8 +67,7 @@ export default function LayoutEditor({ language, layout, onChange }: LayoutEdito
     clipboard: 'Clipboard',
     shelf: 'File Shelf',
     prayer: localize(language, 'Jadwal Salat', 'Prayer'),
-    capture: 'Capture & OCR',
-    settings: localize(language, 'Pengaturan (wajib)', 'Settings (locked)')
+    capture: 'Capture & OCR'
   };
 
   const presets: { id: LayoutPresetId; label: string }[] = [
@@ -315,7 +314,7 @@ export default function LayoutEditor({ language, layout, onChange }: LayoutEdito
             layout.toolsTabs,
             tabLabels,
             (toolsTabs) => onChange({ ...layout, preset: 'custom', toolsTabs }),
-            'settings'
+            'focus'
           )}
         </>
       )}

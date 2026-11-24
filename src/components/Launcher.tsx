@@ -1,5 +1,6 @@
+import { invoke } from '@tauri-apps/api/core';
 import { m, type Transition } from 'framer-motion';
-import { Camera, ExternalLink, Gauge, LayoutGrid, LockKeyhole, Music2, Sparkles } from 'lucide-react';
+import { Camera, ExternalLink, Gauge, LayoutGrid, LockKeyhole, Music2, Settings, Sparkles, X } from 'lucide-react';
 import { localize, type AppLanguage } from '../lib/i18n';
 import type { CustomShortcut, LauncherColumns, LauncherItemId, LayoutItemConfig } from '../lib/layoutSettings';
 import type { MediaInfo } from '../types';
@@ -22,6 +23,7 @@ interface LauncherProps {
   onOpenCapture: () => void;
   onOpenCustomShortcut: (target: string) => void;
   onLock: () => void;
+  onClose: () => void;
 }
 
 export default function Launcher({
@@ -41,7 +43,8 @@ export default function Launcher({
   onOpenAi,
   onOpenCapture,
   onOpenCustomShortcut,
-  onLock
+  onLock,
+  onClose
 }: LauncherProps) {
   const visibleItems = items.filter((item) => item.visible);
   const effectiveItems = visibleItems.length > 0 || customShortcuts.length > 0
@@ -53,14 +56,46 @@ export default function Launcher({
   return (
     <m.nav
       key="launcher"
-      className="island-launcher"
-      style={!isSidePosition ? { gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` } : undefined}
+      className={`island-launcher-wrap island-module${isSidePosition ? ' island-launcher-wrap--side' : ''}`}
       initial={{ opacity: 0, x: travelX, y: travelY, scale: 0.97 }}
       animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
       exit={{ opacity: 0, x: travelX, y: travelY, scale: 0.99 }}
       transition={transition}
       aria-label={localize(language, 'Menu Dynamic Island', 'Dynamic Island menu')}
     >
+      <header className="launcher-header">
+        <span className="launcher-header__title">{localize(language, 'Menu', 'Menu')}</span>
+        <div className="island-action-pill">
+          <button
+            type="button"
+            className="detail-action-button"
+            aria-label={localize(language, 'Buka pengaturan', 'Open settings')}
+            title={localize(language, 'Buka pengaturan', 'Open settings')}
+            onClick={(event) => {
+              event.stopPropagation();
+              void invoke('open_settings_window').catch(() => {});
+            }}
+          >
+            <Settings size={13} />
+          </button>
+          <button
+            type="button"
+            className="detail-action-button"
+            aria-label={localize(language, 'Tutup menu', 'Close menu')}
+            title={localize(language, 'Tutup menu', 'Close menu')}
+            onClick={(event) => {
+              event.stopPropagation();
+              onClose();
+            }}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      </header>
+      <div
+        className="island-launcher"
+        style={!isSidePosition ? { gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` } : undefined}
+      >
       {effectiveItems.map(({ id }, index) => {
         const itemMotion = {
           initial: { opacity: 0, y: 6, scale: 0.94 },
@@ -139,6 +174,7 @@ export default function Launcher({
           <span className="launcher-item__copy"><strong>{shortcut.label}</strong></span>
         </m.button>
       ))}
+      </div>
     </m.nav>
   );
 }

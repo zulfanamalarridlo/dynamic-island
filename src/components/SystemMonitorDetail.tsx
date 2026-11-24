@@ -131,32 +131,34 @@ export default function SystemMonitorDetail({
           <strong>{localize(language, 'Monitor Sistem', 'System Monitor')}</strong>
           <small>{localize(language, 'Penggunaan perangkat', 'Device usage')}</small>
         </div>
-        <button
-          type="button"
-          className={`detail-action-button detail-action-button--pin${pinned ? ' is-active' : ''}`}
-          aria-label={pinned
-            ? localize(language, 'Lepas sematan monitor sistem', 'Unpin system monitor')
-            : localize(language, 'Sematkan semua monitor sistem', 'Pin all system metrics')}
-          aria-pressed={pinned}
-          title={pinned
-            ? localize(language, 'Lepas sematan monitor sistem', 'Unpin system monitor')
-            : localize(language, 'Sematkan semua monitor sistem', 'Pin all system metrics')}
-          onClick={(event) => {
-            event.stopPropagation();
-            onTogglePin();
-          }}
-        >
-          <Pin size={14} />
-        </button>
-        <button
-          type="button"
-          className="detail-action-button"
-          aria-label={localize(language, 'Tutup monitor sistem', 'Close system monitor')}
-          title={localize(language, 'Tutup', 'Close')}
-          onClick={(event) => { event.stopPropagation(); onClose(); }}
-        >
-          <X size={15} />
-        </button>
+        <div className="island-action-pill">
+          <button
+            type="button"
+            className={`detail-action-button detail-action-button--pin${pinned ? ' is-active' : ''}`}
+            aria-label={pinned
+              ? localize(language, 'Lepas sematan monitor sistem', 'Unpin system monitor')
+              : localize(language, 'Sematkan semua monitor sistem', 'Pin all system metrics')}
+            aria-pressed={pinned}
+            title={pinned
+              ? localize(language, 'Lepas sematan monitor sistem', 'Unpin system monitor')
+              : localize(language, 'Sematkan semua monitor sistem', 'Pin all system metrics')}
+            onClick={(event) => {
+              event.stopPropagation();
+              onTogglePin();
+            }}
+          >
+            <Pin size={13} />
+          </button>
+          <button
+            type="button"
+            className="detail-action-button"
+            aria-label={localize(language, 'Tutup monitor sistem', 'Close system monitor')}
+            title={localize(language, 'Tutup', 'Close')}
+            onClick={(event) => { event.stopPropagation(); onClose(); }}
+          >
+            <X size={13} />
+          </button>
+        </div>
       </header>
       <div className="system-monitor__grid">
         <MetricCard

@@ -4,17 +4,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, m } from 'framer-motion';
 import {
-  Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, ExternalLink, File, KeyRound, LayoutTemplate, ListTodo,
-  LocateFixed, Palette, Pause, Pin, Play, Plus, RotateCcw, Save, ScanText, Scissors, Search, Settings, Smile, Sparkles, StickyNote, Trash2, Upload, X
+  AlarmClock, ArrowLeft, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, ExternalLink, File, ListTodo,
+  LocateFixed, Pause, Pin, Play, Plus, RotateCcw, ScanText, Scissors, Search, Settings, Sparkles, StickyNote, X
 } from 'lucide-react';
 import AiChatTab from './AiChatTab';
-import LayoutEditor from './LayoutEditor';
 import SlideDigits from './SlideDigits';
 import { localize, type AppLanguage } from '../lib/i18n';
 import { readAppSetting, saveAppSetting } from '../lib/storage';
-import type { AnimationSpeed, ClickThroughMode, ClockFormat, DateFormatStyle, IdleDisplayStyle, IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
 import type { IslandLayoutSettings, ToolTabId } from '../lib/layoutSettings';
-import { parseConfigBundle, readSavedProfiles, saveProfiles, serializeConfigBundle, type SavedIslandProfile } from '../lib/profiles';
 
 export interface ClipboardItem {
   text: string;
@@ -33,21 +30,6 @@ interface ClickUpTask {
   name: string;
   status?: { status: string } | null;
   due_date?: string | null;
-}
-
-interface MonitorOption {
-  index: number;
-  name: string;
-  width: number;
-  height: number;
-  isPrimary: boolean;
-}
-
-interface WindowsStartupConfig {
-  enabled: boolean;
-  startHidden: boolean;
-  delaySeconds: number;
-  isDebugBuild: boolean;
 }
 
 interface ClickUpConfig {
@@ -74,54 +56,12 @@ interface AladhanResponse {
   };
 }
 
-type ActivityModule =
-  | 'capsLock'
-  | 'numLock'
-  | 'scrollLock'
-  | 'microphone'
-  | 'speaker'
-  | 'volume'
-  | 'clipboard'
-  | 'brightness'
-  | 'wifi'
-  | 'power'
-  | 'battery';
-
 type IslandPosition = 0 | 1 | 2; // 0 = top center, 1 = left center, 2 = right center
-
-type ActivityModuleSettings = Record<ActivityModule, boolean>;
-
-const ACTIVITY_MODULES: { id: ActivityModule; label: string }[] = [
-  { id: 'capsLock', label: 'Caps Lock' },
-  { id: 'numLock', label: 'Num Lock' },
-  { id: 'scrollLock', label: 'Scroll Lock' },
-  { id: 'microphone', label: 'Mikrofon' },
-  { id: 'speaker', label: 'Speaker' },
-  { id: 'volume', label: 'Volume' },
-  { id: 'clipboard', label: 'Copy, cut, paste, dan clipboard' },
-  { id: 'brightness', label: 'Tombol kecerahan' },
-  { id: 'wifi', label: 'Wi-Fi' },
-  { id: 'power', label: 'Charger' },
-  { id: 'battery', label: 'Baterai rendah dan penuh' }
-];
-
-const WINDHAWK_THEMES = [
-  'obsidian', 'graphite', 'slate', 'nord', 'evergreen', 'espresso', 'plum', 'porcelain', 'custom'
-] as const;
-
-const ISLAND_SCALES = ['0.8', '1.0', '1.2', '1.5', '1.8', '2.0', '2.5'] as const;
 
 interface ToolsPanelProps {
   language: AppLanguage;
-  onLanguageChange: (language: AppLanguage) => void;
   clipboardItems: ClipboardItem[];
   shelfPaths: string[];
-  activityModuleSettings: ActivityModuleSettings;
-  windowsNotificationNotices: boolean;
-  notificationAppFilters: Record<string, boolean>;
-  onActivityModuleSettingsChange: (settings: ActivityModuleSettings) => void;
-  onWindowsNotificationNoticesChange: (enabled: boolean) => void;
-  onNotificationAppFiltersChange: (filters: Record<string, boolean>) => void;
   onClose: () => void;
   onReturnToMenu: () => void;
   onClearClipboard: () => void;
@@ -131,18 +71,13 @@ interface ToolsPanelProps {
   onCapture: () => void;
   onScreenshot: () => void;
   islandPosition: IslandPosition;
-  onIslandPositionChange: (position: IslandPosition) => void;
-  windhawkSettings: WindhawkSettings;
-  onWindhawkSettingsChange: (settings: WindhawkSettings) => void;
   layoutSettings: IslandLayoutSettings;
-  onLayoutSettingsChange: (layout: IslandLayoutSettings) => void;
-  openSettingsRequest: number;
   openTabRequest: { tab: ToolTabId; seq: number } | null;
   onFocusStateChange?: (state: FocusLiveState) => void;
   onNextPrayerChange?: (label: string | null) => void;
 }
 
-type ToolTab = 'focus' | 'tasks' | 'notes' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
+type ToolTab = ToolTabId;
 
 const TABS: { id: ToolTab; label: string }[] = [
   { id: 'focus', label: 'Focus' },
@@ -152,59 +87,28 @@ const TABS: { id: ToolTab; label: string }[] = [
   { id: 'clipboard', label: 'Clipboard' },
   { id: 'shelf', label: 'Shelf' },
   { id: 'prayer', label: 'Prayer' },
-  { id: 'capture', label: 'Capture' },
-  { id: 'settings', label: 'Settings' }
+  { id: 'capture', label: 'Capture' }
 ];
-
-function getActivityModuleLabel(id: ActivityModule, _label: string, language: AppLanguage) {
-  const englishLabels: Record<ActivityModule, string> = {
-    capsLock: 'Caps Lock',
-    numLock: 'Num Lock',
-    scrollLock: 'Scroll Lock',
-    microphone: 'Microphone',
-    speaker: 'Speaker',
-    volume: 'Volume',
-    clipboard: 'Clipboard',
-    brightness: 'Brightness',
-    wifi: 'Wi-Fi',
-    power: 'Charger',
-    battery: 'Battery'
-  };
-  const indonesianLabels: Record<ActivityModule, string> = {
-    capsLock: 'Caps Lock',
-    numLock: 'Num Lock',
-    scrollLock: 'Scroll Lock',
-    microphone: 'Mikrofon',
-    speaker: 'Speaker',
-    volume: 'Volume',
-    clipboard: 'Clipboard',
-    brightness: 'Kecerahan',
-    wifi: 'Wi-Fi',
-    power: 'Charger',
-    battery: 'Baterai'
-  };
-  return language === 'id' ? indonesianLabels[id] : englishLabels[id];
-}
 
 function localizeMessage(language: AppLanguage, message: string) {
   if (language === 'id' || !message) return message;
   const translations: Record<string, string> = {
     'Atur API key ClickUp di settings.json': 'Set the ClickUp API key in settings.json',
     'Atur List ID ClickUp di settings.json': 'Set the ClickUp List IDs in settings.json',
-    'Menyimpan konfigurasi…': 'Saving configuration…',
+    'Menyimpan konfigurasiâ€¦': 'Saving configurationâ€¦',
     'Pengaturan tersimpan. Perubahan ClickUp langsung digunakan.': 'Settings saved. ClickUp changes are applied immediately.',
     'Lokasi tidak didukung perangkat': 'Location is not supported on this device',
     'Lokasi belum diambil': 'Location has not been acquired',
-    'Mencari lokasi…': 'Finding your location…',
+    'Mencari lokasiâ€¦': 'Finding your locationâ€¦',
     'Lokasi saat ini': 'Current location',
     'Izin lokasi ditolak': 'Location permission denied',
     'Lokasi tidak merespons': 'Location request timed out',
     'Lokasi tidak tersedia': 'Location unavailable',
-    'Memuat jadwal…': 'Loading schedule…',
+    'Memuat jadwalâ€¦': 'Loading scheduleâ€¦',
     'Jadwal salat tidak tersedia': 'Prayer schedule is unavailable',
     'Gagal memuat jadwal salat': 'Failed to load prayer schedule',
     'Pilih List ID yang tersedia dan periksa konfigurasi ClickUp di settings.json': 'Select an available List ID and check the ClickUp configuration in settings.json',
-    'Memuat task dari ClickUp…': 'Loading tasks from ClickUp…',
+    'Memuat task dari ClickUpâ€¦': 'Loading tasks from ClickUpâ€¦',
     'Konfigurasi ClickUp tidak tersedia. Periksa API key dan List ID di settings.json': 'ClickUp configuration is unavailable. Check the API key and List IDs in settings.json',
     'Isi nama task terlebih dahulu': 'Enter a task name first',
     'Pilih tanggal yang valid dan pastikan tanggal akhir tidak sebelum tanggal awal': 'Choose valid dates and make sure the end date is not before the start date',
@@ -214,8 +118,8 @@ function localizeMessage(language: AppLanguage, message: string) {
   if (translations[message]) return translations[message];
   const loaded = message.match(/^(\d+) task dimuat$/);
   if (loaded) return `${loaded[1]} ${loaded[1] === '1' ? 'task' : 'tasks'} loaded`;
-  const creating = message.match(/^Membuat (\d+) task hari kerja dan time entry di ClickUp…$/);
-  if (creating) return `Creating ${creating[1]} weekday tasks and time entries in ClickUp…`;
+  const creating = message.match(/^Membuat (\d+) task hari kerja dan time entry di ClickUpâ€¦$/);
+  if (creating) return `Creating ${creating[1]} weekday tasks and time entries in ClickUpâ€¦`;
   const prayerFailure = message.match(/^Gagal memuat jadwal: (.+)$/);
   if (prayerFailure) return `Failed to load schedule: ${prayerFailure[1]}`;
   const prayerTimeUnavailable = message.match(/^Waktu (.+) tidak tersedia$/);
@@ -338,12 +242,9 @@ function WeekdayDatePicker({ label, value, onChange, language }: WeekdayDatePick
 }
 
 export default function ToolsPanel({
-  language, onLanguageChange, clipboardItems, shelfPaths, activityModuleSettings, windowsNotificationNotices,
-  notificationAppFilters, onActivityModuleSettingsChange, onWindowsNotificationNoticesChange,
-  onNotificationAppFiltersChange, onClose, onReturnToMenu, onClearClipboard,
+  language, clipboardItems, shelfPaths, onClose, onReturnToMenu, onClearClipboard,
   onRemoveShelfItem, onCopyClipboard, onNotice, onCapture, onScreenshot,
-  islandPosition, onIslandPositionChange, windhawkSettings, onWindhawkSettingsChange,
-  layoutSettings, onLayoutSettingsChange, openSettingsRequest, openTabRequest, onFocusStateChange, onNextPrayerChange
+  islandPosition, layoutSettings, openTabRequest, onFocusStateChange, onNextPrayerChange
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolTab>('focus');
   const [capturePaths, setCapturePaths] = useState<string[]>([]);
@@ -352,74 +253,11 @@ export default function ToolsPanel({
   const [clipboardSearch, setClipboardSearch] = useState('');
   const [pinnedClips, setPinnedClips] = useState<string[]>(() => readStored<string[]>('di-pinned-clipboard', []));
   const [quickNotes, setQuickNotes] = useState<string>(() => readStored<string>('di-quick-notes', ''));
-  const [newNotifApp, setNewNotifApp] = useState('');
-  const [savedProfiles, setSavedProfiles] = useState<SavedIslandProfile[]>(readSavedProfiles);
-  const [newProfileName, setNewProfileName] = useState('');
-  const [importJsonText, setImportJsonText] = useState('');
-  const [showImportJson, setShowImportJson] = useState(false);
-  const [monitors, setMonitors] = useState<MonitorOption[]>([]);
-  const [startupConfig, setStartupConfig] = useState<WindowsStartupConfig>({
-    enabled: false,
-    startHidden: false,
-    delaySeconds: 0,
-    isDebugBuild: false
-  });
-  const [startupBusy, setStartupBusy] = useState(false);
-  const [startupStatus, setStartupStatus] = useState('');
-
-  useEffect(() => {
-    if (tab !== 'settings') return;
-    void invoke<MonitorOption[]>('list_monitors')
-      .then((list) => setMonitors(list))
-      .catch(() => {});
-    void invoke<WindowsStartupConfig>('get_windows_startup_config')
-      .then((cfg) => {
-        setStartupConfig(cfg);
-        setStartupStatus('');
-      })
-      .catch(() => {});
-  }, [tab]);
-
-  const updateStartupConfig = async (next: {
-    enabled: boolean;
-    startHidden: boolean;
-    delaySeconds: number;
-  }) => {
-    setStartupBusy(true);
-    setStartupStatus('');
-    try {
-      const updated = await invoke<WindowsStartupConfig>('set_windows_startup_config', {
-        enabled: next.enabled,
-        startHidden: next.startHidden,
-        delaySeconds: next.delaySeconds
-      });
-      setStartupConfig(updated);
-    } catch (error) {
-      setStartupStatus(error instanceof Error ? error.message : String(error));
-    } finally {
-      setStartupBusy(false);
-    }
-  };
 
   const resolvedNavLayout = layoutSettings.toolsNavLayout === 'auto'
     ? (islandPosition === 0 ? 'top' : islandPosition === 1 ? 'left' : 'right')
     : layoutSettings.toolsNavLayout;
   const isVerticalLayout = resolvedNavLayout === 'left' || resolvedNavLayout === 'right';
-  const [expandedSettings, setExpandedSettings] = useState({
-    general: false,
-    theme: false,
-    layout: false,
-    profiles: false,
-    pet: false,
-    activity: false,
-    notifications: false,
-    clickUp: false
-  });
-  useEffect(() => {
-    if (openSettingsRequest === 0) return;
-    setTab('settings');
-    setExpandedSettings((current) => ({ ...current, general: true }));
-  }, [openSettingsRequest]);
   const [remaining, setRemaining] = useState(() => readStored('di-focus-remaining', 25 * 60));
   const [focusMinutes, setFocusMinutes] = useState(() => readStored('di-focus-minutes', 25));
   const [breakMinutes, setBreakMinutes] = useState(() => readStored('di-break-minutes', 5));
@@ -427,10 +265,6 @@ export default function ToolsPanel({
   const [isBreak, setIsBreak] = useState(false);
   const [sessions, setSessions] = useState(() => readStored('di-focus-sessions', 0));
   const [clickUpConfig, setClickUpConfig] = useState<ClickUpConfig | null>(null);
-  const [clickUpApiKeyDraft, setClickUpApiKeyDraft] = useState('');
-  const [clickUpListIdsDraft, setClickUpListIdsDraft] = useState('');
-  const [clickUpSettingsBusy, setClickUpSettingsBusy] = useState(false);
-  const [clickUpSettingsStatus, setClickUpSettingsStatus] = useState('');
   const [clickUpListId, setClickUpListId] = useState('');
   const [clickUpTasks, setClickUpTasks] = useState<ClickUpTask[]>([]);
   const [clickUpTaskDateRange, setClickUpTaskDateRange] = useState<ClickUpTaskDateRange | null>(null);
@@ -558,7 +392,6 @@ export default function ToolsPanel({
       .then((config) => {
         if (!active) return;
         setClickUpConfig(config);
-        setClickUpListIdsDraft(config.list_ids.join(', '));
         const stored = readStored<unknown>('di-clickup-list-id', '');
         const savedListId = typeof stored === 'string' || typeof stored === 'number' ? String(stored) : '';
         const listId = config.list_ids.includes(savedListId) ? savedListId : (config.list_ids[0] ?? '');
@@ -573,33 +406,6 @@ export default function ToolsPanel({
     return () => { active = false; };
   }, []);
 
-  const saveClickUpSettings = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setClickUpSettingsBusy(true);
-    setClickUpSettingsStatus('Menyimpan konfigurasi…');
-    try {
-      const config = await invoke<ClickUpConfig>('save_clickup_config', {
-        apiKey: clickUpApiKeyDraft,
-        listIds: clickUpListIdsDraft
-      });
-      setClickUpConfig(config);
-      setClickUpApiKeyDraft('');
-      setClickUpListIdsDraft(config.list_ids.join(', '));
-      setClickUpStatus('');
-      setClickUpSettingsStatus('Pengaturan tersimpan. Perubahan ClickUp langsung digunakan.');
-      if (!config.list_ids.includes(clickUpListId)) {
-        const nextListId = config.list_ids[0] ?? '';
-        setClickUpListId(nextListId);
-        saveAppSetting('di-clickup-list-id', nextListId);
-        setClickUpTasks([]);
-      }
-    } catch (error) {
-      setClickUpSettingsStatus(error instanceof Error ? error.message : String(error));
-    } finally {
-      setClickUpSettingsBusy(false);
-    }
-  };
-
   const requestLocation = () => {
     if (!navigator.geolocation) {
       setLocationStatus('Lokasi tidak didukung perangkat');
@@ -610,7 +416,7 @@ export default function ToolsPanel({
     setLocation(null);
     setPrayerTimes([]);
     setPrayerStatus('');
-    setLocationStatus('Mencari lokasi…');
+    setLocationStatus('Mencari lokasiâ€¦');
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         const nextLoc = { latitude: coords.latitude, longitude: coords.longitude };
@@ -640,7 +446,7 @@ export default function ToolsPanel({
 
     const controller = new AbortController();
     const loadPrayerTimes = async () => {
-      setPrayerStatus('Memuat jadwal…');
+      setPrayerStatus('Memuat jadwalâ€¦');
       const params = new URLSearchParams({
         latitude: location.latitude.toString(),
         longitude: location.longitude.toString(),
@@ -700,7 +506,7 @@ export default function ToolsPanel({
     const countdown = hours > 0
       ? `${hours}${localize(language, 'j', 'h')} ${mins}m`
       : `${mins}m`;
-    onNextPrayerChange?.(`${name} · ${countdown}`);
+    onNextPrayerChange?.(`${name} Â· ${countdown}`);
   }, [nextPrayer, now, language, onNextPrayerChange]);
 
   useEffect(() => {
@@ -728,7 +534,7 @@ export default function ToolsPanel({
 
     const page = append ? clickUpPage + 1 : 0;
     setClickUpBusy(true);
-    setClickUpStatus('Memuat task dari ClickUp…');
+    setClickUpStatus('Memuat task dari ClickUpâ€¦');
     try {
       const tasks = await invoke<ClickUpTask[]>('get_clickup_tasks', {
         listId,
@@ -790,7 +596,7 @@ export default function ToolsPanel({
       dueDateGt: Date.UTC(firstDate.getUTCFullYear(), firstDate.getUTCMonth(), 1) - 1
     };
     setClickUpBusy(true);
-    setClickUpStatus(`Membuat ${dueDates.length} task hari kerja dan time entry di ClickUp…`);
+    setClickUpStatus(`Membuat ${dueDates.length} task hari kerja dan time entry di ClickUpâ€¦`);
     try {
       await invoke<ClickUpTask[]>('create_clickup_tasks', {
         listId,
@@ -847,13 +653,13 @@ export default function ToolsPanel({
   }, [openTabRequest]);
 
   const visibleTabs = layoutSettings.toolsTabs
-    .filter((entry) => entry.visible || entry.id === 'settings')
+    .filter((entry) => entry.visible)
     .map((entry) => TABS.find((t) => t.id === entry.id))
     .filter((item): item is { id: ToolTab; label: string } => Boolean(item));
 
   useEffect(() => {
     if (!visibleTabs.some((item) => item.id === tab)) {
-      setTab(visibleTabs[0]?.id ?? 'settings');
+      setTab(visibleTabs[0]?.id ?? 'focus');
     }
   }, [visibleTabs, tab]);
 
@@ -869,34 +675,42 @@ export default function ToolsPanel({
 
   const tabsIcon: Record<ToolTab, ReactNode> = {
     focus: <AlarmClock size={15} />, tasks: <ListTodo size={15} />, notes: <StickyNote size={15} />, ai: <Sparkles size={15} />, clipboard: <Clipboard size={15} />,
-    shelf: <File size={15} />, prayer: <span>☾</span>, capture: <Camera size={15} />, settings: <Settings size={15} />
+    shelf: <File size={15} />, prayer: <span>☾</span>, capture: <Camera size={15} />
   };
 
   return (
     <section
-      className={`tools-panel${isVerticalLayout ? ' tools-panel--side' : ''}${resolvedNavLayout === 'right' ? ' tools-panel--nav-right' : ''}${layoutSettings.toolsTabLabels ? ' tools-panel--with-labels' : ''}`}
+      className={`tools-panel island-module${isVerticalLayout ? ' tools-panel--side' : ''}${resolvedNavLayout === 'right' ? ' tools-panel--nav-right' : ''}${layoutSettings.toolsTabLabels ? ' tools-panel--with-labels' : ''}`}
       aria-label={localize(language, 'Alat Dynamic Island', 'Dynamic Island tools')}
     >
       <header className="tools-header">
-        <button className="tools-back" aria-label={localize(language, 'Kembali ke menu', 'Back to menu')} onClick={onReturnToMenu}><ArrowLeft size={15} /></button>
-        <div className="tools-header__actions">
+        <button className="tools-back" aria-label={localize(language, 'Kembali ke menu', 'Back to menu')} onClick={onReturnToMenu}><ArrowLeft size={14} /></button>
+        <div className="island-action-pill">
           <button
             type="button"
-            className="tools-close"
+            className="detail-action-button"
             aria-label={localize(language, 'Buka jendela pengaturan', 'Open settings window')}
             title={localize(language, 'Buka jendela pengaturan terpisah', 'Open separate settings window')}
             onClick={() => { void invoke('open_settings_window').catch(() => {}); }}
           >
-            <Settings size={14} />
+            <Settings size={13} />
           </button>
-          <button className="tools-close" aria-label={localize(language, 'Tutup menu', 'Close menu')} onClick={onClose}><X size={15} /></button>
+          <button
+            type="button"
+            className="detail-action-button"
+            aria-label={localize(language, 'Tutup menu', 'Close menu')}
+            title={localize(language, 'Tutup', 'Close')}
+            onClick={onClose}
+          >
+            <X size={13} />
+          </button>
         </div>
       </header>
       <nav className="tools-tabs" aria-label={localize(language, 'Alat', 'Tools')}>
         {visibleTabs.map((item) => (
           <button
             key={item.id}
-            aria-label={item.id === 'settings' ? localize(language, 'Pengaturan', 'Settings') : item.id === 'focus' ? localize(language, 'Fokus', 'Focus') : item.id === 'tasks' ? 'To-do' : item.id === 'notes' ? localize(language, 'Catatan', 'Notes') : item.id === 'ai' ? 'AI Chat' : item.id === 'clipboard' ? 'Clipboard' : item.id === 'shelf' ? 'Shelf' : item.id === 'prayer' ? localize(language, 'Salat', 'Prayer') : localize(language, 'Tangkapan layar', 'Capture')}
+            aria-label={item.id === 'focus' ? localize(language, 'Fokus', 'Focus') : item.id === 'tasks' ? 'To-do' : item.id === 'notes' ? localize(language, 'Catatan', 'Notes') : item.id === 'ai' ? 'AI Chat' : item.id === 'clipboard' ? 'Clipboard' : item.id === 'shelf' ? 'Shelf' : item.id === 'prayer' ? localize(language, 'Salat', 'Prayer') : localize(language, 'Tangkapan layar', 'Capture')}
             aria-current={tab === item.id ? 'page' : undefined}
             className={tab === item.id ? 'tools-tab is-active' : 'tools-tab'}
             onClick={() => setTab(item.id)}
@@ -928,7 +742,7 @@ export default function ToolsPanel({
           >
         {tab === 'focus' && (
           <div className="tool-card focus-card">
-            <span className="focus-status">{isBreak ? localize(language, 'Istirahat', 'Break') : localize(language, 'Fokus', 'Focus')}{sessions > 0 ? ` · ${sessions} ${localize(language, 'selesai', 'completed')}` : ''}</span>
+            <span className="focus-status">{isBreak ? localize(language, 'Istirahat', 'Break') : localize(language, 'Fokus', 'Focus')}{sessions > 0 ? ` Â· ${sessions} ${localize(language, 'selesai', 'completed')}` : ''}</span>
             <strong className="focus-countdown"><SlideDigits value={formatTime(remaining)} /></strong>
             <div className="focus-actions">
               <button className="tool-primary" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={15} /> : <Play size={15} />}{running ? localize(language, 'Jeda', 'Pause') : localize(language, 'Mulai', 'Start')}</button>
@@ -951,7 +765,7 @@ export default function ToolsPanel({
         {tab === 'tasks' && (
           <div className="tool-card">
             {clickUpConfig === null ? (
-              <p className="tool-empty">{clickUpStatus ? localizeMessage(language, clickUpStatus) : localize(language, 'Memeriksa konfigurasi ClickUp…', 'Checking ClickUp configuration…')}</p>
+              <p className="tool-empty">{clickUpStatus ? localizeMessage(language, clickUpStatus) : localize(language, 'Memeriksa konfigurasi ClickUpâ€¦', 'Checking ClickUp configurationâ€¦')}</p>
             ) : !clickUpConfig.api_key_configured || clickUpConfig.list_ids.length === 0 ? (
               <div className="clickup-settings-help">
                 <strong>{localize(language, 'Konfigurasi ClickUp belum lengkap', 'ClickUp configuration is incomplete')}</strong>
@@ -976,7 +790,7 @@ export default function ToolsPanel({
                     </select>
                   </label>
                   <button className="tool-primary" type="button" disabled={clickUpBusy || !clickUpListId} onClick={() => { void loadClickUpTasks(false); }}>
-                    {clickUpBusy ? localize(language, 'Memuat…', 'Loading…') : localize(language, 'Muat task', 'Load tasks')}
+                    {clickUpBusy ? localize(language, 'Memuatâ€¦', 'Loadingâ€¦') : localize(language, 'Muat task', 'Load tasks')}
                   </button>
                   <button className="clickup-create-button" type="button" onClick={() => {
                     setClickUpStatus('');
@@ -1011,7 +825,7 @@ export default function ToolsPanel({
                     <div className="clickup-create-actions">
                     <button type="button" className="tool-text-button" disabled={clickUpBusy} onClick={() => setShowClickUpCreate(false)}>{localize(language, 'Batal', 'Cancel')}</button>
                     <button className="tool-primary" type="submit" disabled={clickUpBusy}>
-                      {clickUpBusy ? localize(language, 'Memproses…', 'Processing…') : localize(language, 'Buat task', 'Create task')}
+                      {clickUpBusy ? localize(language, 'Memprosesâ€¦', 'Processingâ€¦') : localize(language, 'Buat task', 'Create task')}
                     </button>
                     </div>
                   </form>
@@ -1026,7 +840,7 @@ export default function ToolsPanel({
                           <tr key={task.id}>
                             <td>{task.name}</td>
                             <td><span className="clickup-task-status">{task.status?.status ?? localize(language, 'Tanpa status', 'No status')}</span></td>
-                            <td>{task.due_date ? new Date(Number(task.due_date)).toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US') : '—'}</td>
+                            <td>{task.due_date ? new Date(Number(task.due_date)).toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US') : 'â€”'}</td>
                           </tr>
                         ))}
                         {!clickUpTasks.length && <tr><td className="clickup-table-empty" colSpan={3}>{localize(language, 'Pilih daftar, lalu muat task.', 'Select a list, then load tasks.')}</td></tr>}
@@ -1044,7 +858,7 @@ export default function ToolsPanel({
           <div className="tool-card notes-card">
             <div className="tool-card-heading">
               <span className="tool-count">
-                {quickNotes.trim() ? `${quickNotes.trim().split(/\s+/).length} ${localize(language, 'kata', 'words')} · ${quickNotes.length}` : localize(language, 'Catatan cepat', 'Quick scratchpad')}
+                {quickNotes.trim() ? `${quickNotes.trim().split(/\s+/).length} ${localize(language, 'kata', 'words')} Â· ${quickNotes.length}` : localize(language, 'Catatan cepat', 'Quick scratchpad')}
               </span>
               <div className="notes-actions">
                 <button
@@ -1074,7 +888,7 @@ export default function ToolsPanel({
             <textarea
               className="notes-textarea"
               value={quickNotes}
-              placeholder={localize(language, 'Tulis catatan kilat di sini… (tersimpan otomatis)', 'Write quick notes here… (auto-saved)')}
+              placeholder={localize(language, 'Tulis catatan kilat di siniâ€¦ (tersimpan otomatis)', 'Write quick notes hereâ€¦ (auto-saved)')}
               onChange={(event) => {
                 const value = event.target.value;
                 setQuickNotes(value);
@@ -1097,7 +911,7 @@ export default function ToolsPanel({
               <div className="tool-card-heading">
                 <span className="tool-count">
                   {combined.length} {localize(language, 'item', 'items')}
-                  {pinnedClips.length > 0 ? ` · ${pinnedClips.length} pin` : ''}
+                  {pinnedClips.length > 0 ? ` Â· ${pinnedClips.length} pin` : ''}
                 </span>
                 <button className="tool-text-button" onClick={onClearClipboard}>{localize(language, 'Hapus riwayat', 'Clear history')}</button>
               </div>
@@ -1106,7 +920,7 @@ export default function ToolsPanel({
                 <input
                   type="text"
                   value={clipboardSearch}
-                  placeholder={localize(language, 'Cari clipboard…', 'Search clipboard…')}
+                  placeholder={localize(language, 'Cari clipboardâ€¦', 'Search clipboardâ€¦')}
                   onChange={(event) => setClipboardSearch(event.target.value)}
                 />
                 {clipboardSearch && (
@@ -1190,8 +1004,8 @@ export default function ToolsPanel({
           <div className="tool-card">
             <div className="tool-card-heading">
               <span className="tool-count">{localizeMessage(language, locationStatus)}</span>
-              {nextPrayer && <span className="prayer-next">{nextPrayer[0]} · {nextPrayer[1]}</span>}
-              {(locationStatus !== 'Lokasi saat ini' || (prayerStatus && prayerStatus !== 'Memuat jadwal…')) && (
+              {nextPrayer && <span className="prayer-next">{nextPrayer[0]} Â· {nextPrayer[1]}</span>}
+              {(locationStatus !== 'Lokasi saat ini' || (prayerStatus && prayerStatus !== 'Memuat jadwalâ€¦')) && (
                 <button
                   className="prayer-retry"
                   aria-label={localize(language, 'Coba lagi', 'Retry')}
@@ -1232,7 +1046,7 @@ export default function ToolsPanel({
               </button>
               <button type="button" className="capture-action" onClick={() => { void runOcr(); }} disabled={ocrRunning}>
                 <ScanText size={16} />
-                <span>{ocrRunning ? '…' : 'OCR'}</span>
+                <span>{ocrRunning ? 'â€¦' : 'OCR'}</span>
               </button>
             </div>
             {ocrText !== null && (
@@ -1295,1186 +1109,6 @@ export default function ToolsPanel({
                 </div>
               ))}
             </div>
-          </div>
-        )}
-        {tab === 'settings' && (
-          <div className="tool-card">
-            <header className="settings-page-heading">
-              <span className="settings-page-icon"><Settings size={16} /></span>
-              <div>
-                <h2>{localize(language, 'Pengaturan', 'Settings')}</h2>
-                <p>{localize(language, 'Atur notifikasi dan koneksi aplikasi.', 'Configure notifications and app connections.')}</p>
-                {clickUpConfig?.settings_path && (
-                  <small className="settings-location" title={clickUpConfig.settings_path}>
-                    {clickUpConfig.settings_path}
-                  </small>
-                )}
-              </div>
-            </header>
-
-            <p className="settings-group-label">{localize(language, 'UMUM & TEMA', 'GENERAL & THEME')}</p>
-            <section className="settings-section settings-section--general">
-              <button
-                className="settings-section-toggle"
-                type="button"
-                aria-expanded={expandedSettings.general}
-                aria-controls="settings-general-content"
-                onClick={() => setExpandedSettings((current) => ({ ...current, general: !current.general }))}
-              >
-                <span className="settings-section-icon"><Settings size={13} /></span>
-                <span className="settings-section-title">
-                  <strong>{localize(language, 'Umum', 'General')}</strong>
-                  <small>{localize(language, 'Bahasa, posisi & bentuk', 'Language, position & shape')}</small>
-                </span>
-                <ChevronRight className="settings-section-chevron" size={14} />
-              </button>
-              {expandedSettings.general && (
-                <div className="settings-section-content" id="settings-general-content">
-                  <section className="settings-section settings-language-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Bahasa', 'Language')}</span>
-                      <select value={language} onChange={(event) => onLanguageChange(event.target.value as AppLanguage)}>
-                        <option value="id">Indonesia</option>
-                        <option value="en">English</option>
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-section-title">
-                      <strong>{localize(language, 'Posisi layar', 'Screen position')}</strong>
-                    </label>
-                    <div className="settings-position-options">
-                      {([1, 0, 2] as const).map((value) => (
-                        <button
-                          key={value}
-                          type="button"
-                          className={`settings-position-btn ${islandPosition === value ? 'settings-position-btn-active' : ''}`}
-                          onClick={() => {
-                            const position: IslandPosition = value;
-                            onIslandPositionChange(position);
-                          }}
-                          aria-pressed={islandPosition === value}
-                        >
-                          {value === 0 ? <LocateFixed size={13} /> : value === 1 ? <ArrowLeft size={13} /> : <ArrowRight size={13} />}
-                          <span>{localize(language, value === 0 ? 'Atas' : value === 1 ? 'Kiri' : 'Kanan', value === 0 ? 'Top' : value === 1 ? 'Left' : 'Right')}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Jarak tepi', 'Edge offset')}</span>
-                      <input
-                        className="settings-range"
-                        type="range"
-                        min={0}
-                        max={48}
-                        step={2}
-                        value={Math.min(48, Math.max(0, windhawkSettings.appearance.edgeOffset))}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, edgeOffset: Number(event.target.value) }
-                        })}
-                      />
-                      <small className="settings-range-value">
-                        {Math.min(48, Math.max(0, windhawkSettings.appearance.edgeOffset))}px
-                      </small>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>Monitor</span>
-                      <select
-                        value={windhawkSettings.appearance.monitorIndex}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, monitorIndex: Number(event.target.value) }
-                        })}
-                      >
-                        <option value={-1}>{localize(language, 'Utama (Auto)', 'Primary (Auto)')}</option>
-                        {monitors.map((monitor) => (
-                          <option key={monitor.index} value={monitor.index}>
-                            {`${monitor.name} (${monitor.width}×${monitor.height})${monitor.isPrimary ? ' ★' : ''}`}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-inline-row">
-                      <span className="settings-section-title">
-                        <strong>{localize(language, 'Scroll volume & cahaya', 'Scroll volume & brightness')}</strong>
-                        <small>{localize(language, 'Scroll di idle: volume · Shift+Scroll: cahaya', 'Scroll on idle: volume · Shift+Scroll: brightness')}</small>
-                      </span>
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        checked={windhawkSettings.appearance.scrollControlEnabled}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, scrollControlEnabled: event.target.checked }
-                        })}
-                      />
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-inline-row">
-                      <span className="settings-section-title">
-                        <strong>{localize(language, 'Sembunyi saat fullscreen', 'Auto-hide in fullscreen')}</strong>
-                        <small>{localize(language, 'Otomatis sembunyi saat game/video penuh', 'Hide during fullscreen games & videos')}</small>
-                      </span>
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        checked={windhawkSettings.appearance.autoHideFullscreen}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, autoHideFullscreen: event.target.checked }
-                        })}
-                      />
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Tembus klik', 'Click-through')}</span>
-                      <select
-                        value={windhawkSettings.appearance.clickThroughMode}
-                        onChange={(event) => {
-                          const value = event.target.value as ClickThroughMode;
-                          const valid: ClickThroughMode[] = ['off', 'always', 'hold-alt-pass', 'hold-alt-interact'];
-                          if (!valid.includes(value)) return;
-                          onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            appearance: { ...windhawkSettings.appearance, clickThroughMode: value }
-                          });
-                        }}
-                      >
-                        <option value="off">{localize(language, 'Mati (normal)', 'Off (normal)')}</option>
-                        <option value="hold-alt-pass">{localize(language, 'Tahan Alt → tembus ke belakang', 'Hold Alt → pass click through')}</option>
-                        <option value="hold-alt-interact">{localize(language, 'Tembus saat idle (tahan Alt untuk klik)', 'Pass on idle (hold Alt to click)')}</option>
-                        <option value="always">{localize(language, 'Selalu tembus klik', 'Always click-through')}</option>
-                      </select>
-                    </label>
-                    <div className="settings-shortcut-hints">
-                      <span><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd> {localize(language, 'Toggle tembus klik', 'Toggle click-through')}</span>
-                      <span><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> {localize(language, 'Sembunyikan / tampilkan', 'Hide / show panel')}</span>
-                    </div>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-inline-row">
-                      <span className="settings-section-title">
-                        <strong>{localize(language, 'Auto-startup Windows', 'Windows auto-startup')}</strong>
-                        <small>
-                          {startupConfig.isDebugBuild
-                            ? localize(language, 'Hanya aktif pada build rilis (mode dev dilindungi)', 'Release builds only (dev mode protected)')
-                            : localize(language, 'Jalankan otomatis saat login Windows', 'Launch automatically on Windows sign-in')}
-                        </small>
-                      </span>
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        disabled={startupBusy || (startupConfig.isDebugBuild && !startupConfig.enabled)}
-                        checked={startupConfig.enabled}
-                        onChange={(event) => {
-                          void updateStartupConfig({
-                            enabled: event.target.checked,
-                            startHidden: startupConfig.startHidden,
-                            delaySeconds: startupConfig.delaySeconds
-                          });
-                        }}
-                      />
-                    </label>
-                    {startupConfig.enabled && (
-                      <>
-                        <label className="settings-inline-row" style={{ marginTop: 6 }}>
-                          <span className="settings-section-title">
-                            <strong>{localize(language, 'Mulai tersembunyi di Tray', 'Start hidden in Tray')}</strong>
-                          </span>
-                          <input
-                            type="checkbox"
-                            role="switch"
-                            disabled={startupBusy}
-                            checked={startupConfig.startHidden}
-                            onChange={(event) => {
-                              void updateStartupConfig({
-                                enabled: true,
-                                startHidden: event.target.checked,
-                                delaySeconds: startupConfig.delaySeconds
-                              });
-                            }}
-                          />
-                        </label>
-                        <label className="settings-language-field" style={{ marginTop: 6 }}>
-                          <span>{localize(language, 'Delay startup', 'Startup delay')}</span>
-                          <select
-                            disabled={startupBusy}
-                            value={startupConfig.delaySeconds}
-                            onChange={(event) => {
-                              void updateStartupConfig({
-                                enabled: true,
-                                startHidden: startupConfig.startHidden,
-                                delaySeconds: Number(event.target.value)
-                              });
-                            }}
-                          >
-                            <option value={0}>{localize(language, 'Langsung (0 dtk)', 'Immediate (0s)')}</option>
-                            <option value={3}>3 {localize(language, 'detik', 'seconds')}</option>
-                            <option value={5}>5 {localize(language, 'detik', 'seconds')}</option>
-                            <option value={10}>10 {localize(language, 'detik', 'seconds')}</option>
-                          </select>
-                        </label>
-                      </>
-                    )}
-                    {startupStatus && <p className="tool-status" style={{ marginTop: 4 }}>{startupStatus}</p>}
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Gaya & bentuk', 'Shape & style')}</span>
-                      <select
-                        value={windhawkSettings.appearance.shapeStyle}
-                        onChange={(event) => {
-                          const value = event.target.value as IslandShapeStyle;
-                          const validShapes: IslandShapeStyle[] = ['default', 'w11', 'notch', 'capsule', 'sharp', 'cyber'];
-                          if (!validShapes.includes(value)) return;
-                          onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            appearance: { ...windhawkSettings.appearance, shapeStyle: value }
-                          });
-                        }}
-                      >
-                        <option value="default">Pill</option>
-                        <option value="w11">Windows 11</option>
-                        <option value="notch">macOS Notch</option>
-                        <option value="capsule">{localize(language, 'Kapsul (bulat penuh)', 'Capsule (full pill)')}</option>
-                        <option value="sharp">{localize(language, 'Minimal (tajam)', 'Minimal Sharp')}</option>
-                        <option value="cyber">{localize(language, 'Cyber (sudut potong)', 'Cyber Chamfer')}</option>
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Mode tampilan Idle', 'Idle display mode')}</span>
-                      <select
-                        value={windhawkSettings.appearance.idleStyle}
-                        onChange={(event) => {
-                          const value = event.target.value as IdleDisplayStyle;
-                          const valid: IdleDisplayStyle[] = ['standard', 'stealth', 'prayer', 'dual', 'hud', 'vinyl', 'ticker'];
-                          if (!valid.includes(value)) return;
-                          onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            appearance: { ...windhawkSettings.appearance, idleStyle: value }
-                          });
-                        }}
-                      >
-                        <option value="standard">{localize(language, 'Standar', 'Standard')}</option>
-                        <option value="stealth">{localize(language, 'Stealth (ramping, mekar saat hover)', 'Stealth (micro, expand on hover)')}</option>
-                        <option value="prayer">{localize(language, 'Countdown jadwal salat', 'Prayer countdown')}</option>
-                        <option value="dual">{localize(language, 'Dual-Pill Split (gaya iPhone)', 'Dual-Pill Split (iPhone style)')}</option>
-                        <option value="hud">{localize(language, 'HUD Developer / Gamer (CPU/RAM)', 'Developer / Gamer HUD')}</option>
-                        <option value="vinyl">{localize(language, 'Vinyl Spin (piringan hitam)', 'Vinyl Spin disc')}</option>
-                        <option value="ticker">{localize(language, 'Smart Status Ticker', 'Smart Status Ticker')}</option>
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Format jam', 'Clock format')}</span>
-                      <select
-                        value={windhawkSettings.appearance.clockFormat}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, clockFormat: event.target.value as ClockFormat }
-                        })}
-                      >
-                        <option value="24h">24 {localize(language, 'jam', 'hour')}</option>
-                        <option value="12h">12 {localize(language, 'jam (AM/PM)', 'hour (AM/PM)')}</option>
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-inline-row">
-                      <span className="settings-section-title">
-                        <strong>{localize(language, 'Tampilkan detik', 'Show seconds')}</strong>
-                      </span>
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        checked={windhawkSettings.appearance.showSeconds}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, showSeconds: event.target.checked }
-                        })}
-                      />
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Format tanggal', 'Date format')}</span>
-                      <select
-                        value={windhawkSettings.appearance.dateFormat}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, dateFormat: event.target.value as DateFormatStyle }
-                        })}
-                      >
-                        <option value="short">{localize(language, 'Ringkas (Sen, 23 Nov)', 'Short (Mon, 23 Nov)')}</option>
-                        <option value="numeric">{localize(language, 'Angka (23/11)', 'Numeric (23/11)')}</option>
-                        <option value="full">{localize(language, 'Lengkap (23 Nov 2026)', 'Full (23 Nov 2026)')}</option>
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Animasi', 'Animation')}</span>
-                      <select
-                        value={windhawkSettings.appearance.animationSpeed}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, animationSpeed: event.target.value as AnimationSpeed }
-                        })}
-                      >
-                        <option value="snappy">{localize(language, 'Cepat', 'Snappy')}</option>
-                        <option value="normal">Normal</option>
-                        <option value="smooth">{localize(language, 'Halus', 'Smooth')}</option>
-                        <option value="off">{localize(language, 'Mati', 'Off')}</option>
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Durasi notif', 'Notice time')}</span>
-                      <input
-                        className="settings-range"
-                        type="range"
-                        min={2}
-                        max={10}
-                        step={1}
-                        value={Math.min(10, Math.max(2, windhawkSettings.appearance.noticeDurationSec))}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, noticeDurationSec: Number(event.target.value) }
-                        })}
-                      />
-                      <small className="settings-range-value">
-                        {Math.min(10, Math.max(2, windhawkSettings.appearance.noticeDurationSec))}{localize(language, 'dtk', 's')}
-                      </small>
-                    </label>
-                  </section>
-                </div>
-              )}
-            </section>
-
-            <section className="settings-section settings-section--theme">
-              <button
-                className="settings-section-toggle"
-                type="button"
-                aria-expanded={expandedSettings.theme}
-                aria-controls="settings-theme-content"
-                onClick={() => setExpandedSettings((current) => ({ ...current, theme: !current.theme }))}
-              >
-                <span className="settings-section-icon"><Palette size={13} /></span>
-                <span className="settings-section-title">
-                  <strong>{localize(language, 'Tema & Ukuran', 'Theme & Size')}</strong>
-                  <small>{localize(language, 'Warna, opasitas, font & dimensi', 'Colors, opacity, font & sizing')}</small>
-                </span>
-                <span className="settings-enabled-count">
-                  {windhawkSettings.themes.themePreset}
-                </span>
-                <ChevronRight className="settings-section-chevron" size={14} />
-              </button>
-              {expandedSettings.theme && (
-                <div className="settings-section-content" id="settings-theme-content">
-                  <div className="settings-theme-grid" role="radiogroup" aria-label={localize(language, 'Preset tema', 'Theme presets')}>
-                    {([
-                      ['obsidian', 'Obsidian', '#08080a'],
-                      ['graphite', 'Graphite', '#18181b'],
-                      ['slate', 'Slate', '#1e293b'],
-                      ['nord', 'Nord', '#2e3440'],
-                      ['evergreen', 'Evergreen', '#0c2118'],
-                      ['espresso', 'Espresso', '#21180f'],
-                      ['plum', 'Plum', '#241b2f'],
-                      ['porcelain', 'Porcelain', '#f4f2ee'],
-                      ['custom', localize(language, 'Kustom', 'Custom'), windhawkSettings.themes.pillBgColor]
-                    ] as const).map(([id, label, swatch]) => {
-                      const active = windhawkSettings.themes.themePreset === id;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          role="radio"
-                          aria-checked={active}
-                          className={`settings-theme-chip${active ? ' is-active' : ''}`}
-                          onClick={() => {
-                            const themePreset = WINDHAWK_THEMES.find((theme) => theme === id);
-                            if (!themePreset) return;
-                            onWindhawkSettingsChange({
-                              ...windhawkSettings,
-                              themes: { ...windhawkSettings.themes, themePreset }
-                            });
-                          }}
-                        >
-                          <i className="settings-theme-chip__swatch" style={{ backgroundColor: swatch }} aria-hidden="true" />
-                          <span>{label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {windhawkSettings.themes.themePreset === 'custom' && (
-                    <div className="settings-color-row">
-                      <label className="settings-color-field">
-                        <span>{localize(language, 'Latar', 'Bg')}</span>
-                        <input
-                          type="color"
-                          value={windhawkSettings.themes.pillBgColor}
-                          onChange={(event) => onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            themes: { ...windhawkSettings.themes, pillBgColor: event.target.value }
-                          })}
-                        />
-                      </label>
-                      <label className="settings-color-field">
-                        <span>Border</span>
-                        <input
-                          type="color"
-                          value={windhawkSettings.themes.contourBorderHex}
-                          onChange={(event) => onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            themes: { ...windhawkSettings.themes, contourBorderHex: event.target.value }
-                          })}
-                        />
-                      </label>
-                      <label className="settings-color-field">
-                        <span>{localize(language, 'Teks', 'Text')}</span>
-                        <input
-                          type="color"
-                          value={windhawkSettings.themes.textPrimaryColor}
-                          onChange={(event) => onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            themes: { ...windhawkSettings.themes, textPrimaryColor: event.target.value }
-                          })}
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Opasitas', 'Opacity')}</span>
-                      <input
-                        className="settings-range"
-                        type="range"
-                        min={35}
-                        max={100}
-                        step={1}
-                        value={Math.min(100, Math.max(35, windhawkSettings.themes.pillOpacity))}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          themes: { ...windhawkSettings.themes, pillOpacity: Number(event.target.value) }
-                        })}
-                      />
-                      <small className="settings-range-value">{Math.min(100, Math.max(35, windhawkSettings.themes.pillOpacity))}%</small>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Font teks', 'Text font')}</span>
-                      <select
-                        value={windhawkSettings.themes.fontFamily}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          themes: { ...windhawkSettings.themes, fontFamily: event.target.value }
-                        })}
-                      >
-                        <option value="">{localize(language, 'Sistem (default)', 'System (default)')}</option>
-                        <option value='"Segoe UI", sans-serif'>Segoe UI</option>
-                        <option value='"Inter", "Segoe UI", sans-serif'>Inter</option>
-                        <option value='"Trebuchet MS", "Segoe UI", sans-serif'>Rounded Sans</option>
-                        <option value='"Cascadia Code", Consolas, monospace'>Monospace</option>
-                        <option value='Georgia, Cambria, serif'>Serif</option>
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <div className="settings-language-field">
-                      <span>{localize(language, 'Warna teks', 'Text color')}</span>
-                      <div className="settings-text-color-controls">
-                        <input
-                          type="color"
-                          aria-label={localize(language, 'Pilih warna teks', 'Pick text color')}
-                          value={windhawkSettings.themes.textColorOverride || '#f4f4f5'}
-                          onChange={(event) => onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            themes: { ...windhawkSettings.themes, textColorOverride: event.target.value }
-                          })}
-                        />
-                        {windhawkSettings.themes.textColorOverride && (
-                          <button
-                            type="button"
-                            className="settings-activity-bulk"
-                            onClick={() => onWindhawkSettingsChange({
-                              ...windhawkSettings,
-                              themes: { ...windhawkSettings.themes, textColorOverride: '' }
-                            })}
-                          >
-                            Reset
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <div className="settings-language-field">
-                      <span>{localize(language, 'Gradasi latar', 'Bg gradient')}</span>
-                      <div className="settings-text-color-controls">
-                        <input
-                          className="settings-master-switch"
-                          type="checkbox"
-                          role="switch"
-                          checked={windhawkSettings.themes.bgGradientEnabled}
-                          onChange={(event) => onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            themes: { ...windhawkSettings.themes, bgGradientEnabled: event.target.checked }
-                          })}
-                        />
-                        {windhawkSettings.themes.bgGradientEnabled && (
-                          <input
-                            type="color"
-                            aria-label={localize(language, 'Warna gradasi kedua', 'Second gradient color')}
-                            value={windhawkSettings.themes.bgGradientTo}
-                            onChange={(event) => onWindhawkSettingsChange({
-                              ...windhawkSettings,
-                              themes: { ...windhawkSettings.themes, bgGradientTo: event.target.value }
-                            })}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <div className="settings-language-field">
-                      <span>{localize(language, 'Border glow', 'Border glow')}</span>
-                      <div className="settings-text-color-controls">
-                        <input
-                          className="settings-master-switch"
-                          type="checkbox"
-                          role="switch"
-                          checked={windhawkSettings.themes.borderGlowEnabled}
-                          onChange={(event) => onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            themes: { ...windhawkSettings.themes, borderGlowEnabled: event.target.checked }
-                          })}
-                        />
-                        {(windhawkSettings.themes.borderGlowEnabled || windhawkSettings.themes.musicReactiveGlow) && (
-                          <input
-                            type="color"
-                            aria-label={localize(language, 'Warna glow', 'Glow color')}
-                            value={windhawkSettings.themes.borderGlowColor}
-                            onChange={(event) => onWindhawkSettingsChange({
-                              ...windhawkSettings,
-                              themes: { ...windhawkSettings.themes, borderGlowColor: event.target.value }
-                            })}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-inline-row">
-                      <span className="settings-section-title">
-                        <strong>{localize(language, 'Glow ikuti musik', 'Music reactive glow')}</strong>
-                      </span>
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        checked={windhawkSettings.themes.musicReactiveGlow}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          themes: { ...windhawkSettings.themes, musicReactiveGlow: event.target.checked }
-                        })}
-                      />
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Skala', 'Scale')}</span>
-                      <select
-                        value={windhawkSettings.appearance.sizeScale}
-                        onChange={(event) => {
-                          const sizeScale = ISLAND_SCALES.find((scale) => scale === event.target.value);
-                          if (!sizeScale) return;
-                          onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            appearance: { ...windhawkSettings.appearance, sizeScale }
-                          });
-                        }}
-                      >
-                        {ISLAND_SCALES.map((scale) => <option key={scale} value={scale}>{scale}x</option>)}
-                      </select>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Teks', 'Text')}</span>
-                      <input
-                        className="settings-range"
-                        type="range"
-                        min={70}
-                        max={160}
-                        step={1}
-                        value={windhawkSettings.themes.textScale}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          themes: { ...windhawkSettings.themes, textScale: Number(event.target.value) }
-                        })}
-                      />
-                      <small className="settings-range-value">{windhawkSettings.themes.textScale}%</small>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Lebar', 'Width')}</span>
-                      <input
-                        className="settings-range"
-                        type="range"
-                        min={300}
-                        max={560}
-                        step={8}
-                        value={Math.min(560, Math.max(300, windhawkSettings.appearance.panelWidth))}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, panelWidth: Number(event.target.value) }
-                        })}
-                      />
-                      <small className="settings-range-value">{Math.min(560, Math.max(300, windhawkSettings.appearance.panelWidth))}px</small>
-                    </label>
-                  </section>
-
-                  <section className="settings-section settings-position-section">
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Tinggi', 'Height')}</span>
-                      <input
-                        className="settings-range"
-                        type="range"
-                        min={240}
-                        max={520}
-                        step={8}
-                        value={Math.min(520, Math.max(240, windhawkSettings.appearance.panelHeight))}
-                        onChange={(event) => onWindhawkSettingsChange({
-                          ...windhawkSettings,
-                          appearance: { ...windhawkSettings.appearance, panelHeight: Number(event.target.value) }
-                        })}
-                      />
-                      <small className="settings-range-value">{Math.min(520, Math.max(240, windhawkSettings.appearance.panelHeight))}px</small>
-                    </label>
-                  </section>
-                </div>
-              )}
-            </section>
-
-            <section className="settings-section settings-section--layout">
-              <button
-                className="settings-section-toggle"
-                type="button"
-                aria-expanded={expandedSettings.layout}
-                aria-controls="settings-layout-content"
-                onClick={() => setExpandedSettings((current) => ({ ...current, layout: !current.layout }))}
-              >
-                <span className="settings-section-icon"><LayoutTemplate size={13} /></span>
-                <span className="settings-section-title">
-                  <strong>{localize(language, 'Layout Builder', 'Layout Builder')}</strong>
-                  <small>{localize(language, 'Susun ulang Idle, Launcher & Tabs', 'Customize Idle, Launcher & Tabs')}</small>
-                </span>
-                <span className="settings-enabled-count">
-                  {layoutSettings.preset}
-                </span>
-                <ChevronRight className="settings-section-chevron" size={14} />
-              </button>
-              {expandedSettings.layout && (
-                <div className="settings-section-content" id="settings-layout-content">
-                  <LayoutEditor
-                    language={language}
-                    layout={layoutSettings}
-                    onChange={onLayoutSettingsChange}
-                  />
-                </div>
-              )}
-            </section>
-
-            <section className="settings-section settings-section--profiles">
-              <button
-                className="settings-section-toggle"
-                type="button"
-                aria-expanded={expandedSettings.profiles}
-                aria-controls="settings-profiles-content"
-                onClick={() => setExpandedSettings((current) => ({ ...current, profiles: !current.profiles }))}
-              >
-                <span className="settings-section-icon"><Save size={13} /></span>
-                <span className="settings-section-title">
-                  <strong>{localize(language, 'Profil & Backup', 'Profiles & Backup')}</strong>
-                  <small>{localize(language, 'Simpan, ganti & ekspor JSON', 'Save, switch & export JSON')}</small>
-                </span>
-                <span className="settings-enabled-count">{savedProfiles.length}</span>
-                <ChevronRight className="settings-section-chevron" size={14} />
-              </button>
-              {expandedSettings.profiles && (
-                <div className="settings-section-content" id="settings-profiles-content">
-                  <form
-                    className="settings-profile-save"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const name = newProfileName.trim();
-                      if (!name) return;
-                      const nextProfile: SavedIslandProfile = {
-                        id: `prof-${Date.now()}`,
-                        name,
-                        settings: windhawkSettings,
-                        layout: layoutSettings
-                      };
-                      const next = [nextProfile, ...savedProfiles.filter((p) => p.name.toLowerCase() !== name.toLowerCase())].slice(0, 12);
-                      setSavedProfiles(next);
-                      saveProfiles(next);
-                      setNewProfileName('');
-                      onNotice('Profil', localize(language, `Profil "${name}" tersimpan`, `Profile "${name}" saved`));
-                    }}
-                  >
-                    <input
-                      type="text"
-                      value={newProfileName}
-                      placeholder={localize(language, 'Nama profil (Kerja, Gaming)…', 'Profile name (Work, Gaming)…')}
-                      onChange={(event) => setNewProfileName(event.target.value)}
-                    />
-                    <button type="submit" className="settings-activity-bulk" disabled={!newProfileName.trim()}>
-                      {localize(language, 'Simpan', 'Save')}
-                    </button>
-                  </form>
-
-                  {savedProfiles.length > 0 && (
-                    <div className="layout-editor__list" style={{ marginTop: 5 }}>
-                      {savedProfiles.map((profile) => (
-                        <div key={profile.id} className="layout-editor__row">
-                          <button
-                            type="button"
-                            className="settings-profile-apply"
-                            onClick={() => {
-                              onWindhawkSettingsChange(profile.settings);
-                              onLayoutSettingsChange(profile.layout);
-                              onNotice('Profil', localize(language, `Profil "${profile.name}" diterapkan`, `Profile "${profile.name}" applied`));
-                            }}
-                          >
-                            {profile.name}
-                          </button>
-                          <button
-                            type="button"
-                            className="layout-editor__btn"
-                            title={localize(language, 'Hapus profil', 'Delete profile')}
-                            onClick={() => {
-                              const next = savedProfiles.filter((item) => item.id !== profile.id);
-                              setSavedProfiles(next);
-                              saveProfiles(next);
-                            }}
-                          >
-                            <Trash2 size={11} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="settings-profile-io">
-                    <button
-                      type="button"
-                      className="settings-activity-bulk"
-                      onClick={() => {
-                        onCopyClipboard(serializeConfigBundle(windhawkSettings, layoutSettings));
-                        onNotice('Backup', localize(language, 'JSON profil disalin ke clipboard', 'Profile JSON copied to clipboard'));
-                      }}
-                    >
-                      {localize(language, 'Ekspor JSON', 'Export JSON')}
-                    </button>
-                    <button
-                      type="button"
-                      className="settings-activity-bulk"
-                      onClick={() => setShowImportJson((open) => !open)}
-                    >
-                      {localize(language, 'Impor JSON', 'Import JSON')}
-                    </button>
-                  </div>
-
-                  {showImportJson && (
-                    <div className="settings-profile-import">
-                      <textarea
-                        rows={3}
-                        value={importJsonText}
-                        placeholder='{"version":1,"settings":...}'
-                        onChange={(event) => setImportJsonText(event.target.value)}
-                      />
-                      <button
-                        type="button"
-                        className="tool-primary"
-                        disabled={!importJsonText.trim()}
-                        onClick={() => {
-                          const parsed = parseConfigBundle(importJsonText);
-                          if (!parsed) {
-                            onNotice('Backup', localize(language, 'Format JSON tidak valid', 'Invalid JSON format'));
-                            return;
-                          }
-                          onWindhawkSettingsChange(parsed.settings);
-                          onLayoutSettingsChange(parsed.layout);
-                          setImportJsonText('');
-                          setShowImportJson(false);
-                          onNotice('Backup', localize(language, 'Profil JSON berhasil diimpor', 'Profile JSON imported'));
-                        }}
-                      >
-                        {localize(language, 'Terapkan JSON', 'Apply JSON')}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </section>
-
-            <section className="settings-section settings-section--pet">
-              <button
-                className="settings-section-toggle"
-                type="button"
-                aria-expanded={expandedSettings.pet}
-                aria-controls="settings-pet-content"
-                onClick={() => setExpandedSettings((current) => ({ ...current, pet: !current.pet }))}
-              >
-                <span className="settings-section-icon"><Smile size={13} /></span>
-                <span className="settings-section-title">
-                  <strong>{localize(language, 'Karakter Pet', 'Island Pet')}</strong>
-                  <small>{localize(language, 'Pilih karakter & waktu idle', 'Choose character & idle timer')}</small>
-                </span>
-                <span className="settings-enabled-count">
-                  {windhawkSettings.appearance.petStyle === 'none'
-                    ? localize(language, 'Off', 'Off')
-                    : windhawkSettings.appearance.petStyle === 'luffy'
-                      ? 'Luffy'
-                      : windhawkSettings.appearance.petStyle === 'custom'
-                        ? 'Custom'
-                        : windhawkSettings.appearance.petStyle === 'ghost'
-                          ? localize(language, 'Hantu', 'Ghost')
-                          : 'Bot'}
-                </span>
-                <ChevronRight className="settings-section-chevron" size={14} />
-              </button>
-              {expandedSettings.pet && (
-                <div className="settings-section-content" id="settings-pet-content">
-                  <div className="settings-activity-grid" role="radiogroup" aria-label={localize(language, 'Pilih karakter pet', 'Choose pet character')}>
-                    {([
-                      ['luffy', 'Luffy (One Piece)'],
-                      ['custom', 'Custom (PNG/GIF)'],
-                      ['ghost', localize(language, 'Hantu', 'Ghost')],
-                      ['bot', 'Mini Bot'],
-                      ['none', localize(language, 'Nonaktif', 'Off')]
-                    ] as const).map(([id, label]) => {
-                      const active = windhawkSettings.appearance.petStyle === id;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          role="radio"
-                          aria-checked={active}
-                          className={`settings-activity-chip${active ? ' is-active' : ''}`}
-                          onClick={() => onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            appearance: { ...windhawkSettings.appearance, petStyle: id }
-                          })}
-                        >
-                          <i className="settings-activity-chip__dot" aria-hidden="true" />
-                          <span>{label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {windhawkSettings.appearance.petStyle === 'custom' && (
-                    <div className="settings-pet-upload">
-                      <label className="settings-pet-upload__btn">
-                        <Upload size={12} />
-                        <span>{localize(language, 'Pilih gambar PNG/GIF', 'Upload PNG/GIF')}</span>
-                        <input
-                          type="file"
-                          accept="image/png,image/gif,image/webp,image/svg+xml,image/jpeg"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (!file) return;
-                            if (file.size > 600_000) {
-                              onNotice('Pet', localize(language, 'Ukuran file maksimal 600KB', 'Max file size is 600KB'));
-                              return;
-                            }
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              if (typeof reader.result === 'string') {
-                                onWindhawkSettingsChange({
-                                  ...windhawkSettings,
-                                  appearance: {
-                                    ...windhawkSettings.appearance,
-                                    petStyle: 'custom',
-                                    customPetImage: reader.result
-                                  }
-                                });
-                              }
-                            };
-                            reader.readAsDataURL(file);
-                          }}
-                        />
-                      </label>
-                      {windhawkSettings.appearance.customPetImage && (
-                        <img
-                          className="settings-pet-upload__preview"
-                          src={windhawkSettings.appearance.customPetImage}
-                          alt="Custom pet preview"
-                        />
-                      )}
-                    </div>
-                  )}
-
-                  {windhawkSettings.appearance.petStyle !== 'none' && (
-                    <section className="settings-section settings-position-section" style={{ marginTop: 6 }}>
-                      <label className="settings-language-field">
-                        <span>{localize(language, 'Idle animasi', 'Idle trigger')}</span>
-                        <input
-                          className="settings-range"
-                          type="range"
-                          min={1}
-                          max={60}
-                          step={1}
-                          value={Math.min(60, Math.max(1, windhawkSettings.appearance.petIdleMinutes))}
-                          onChange={(event) => onWindhawkSettingsChange({
-                            ...windhawkSettings,
-                            appearance: { ...windhawkSettings.appearance, petIdleMinutes: Number(event.target.value) }
-                          })}
-                        />
-                        <small className="settings-range-value">
-                          {Math.min(60, Math.max(1, windhawkSettings.appearance.petIdleMinutes))} {localize(language, 'mnt', 'min')}
-                        </small>
-                      </label>
-                    </section>
-                  )}
-                </div>
-              )}
-            </section>
-
-            <p className="settings-group-label">{localize(language, 'NOTIFIKASI & AKTIVITAS', 'NOTIFICATIONS & ACTIVITY')}</p>
-            <section className="settings-section settings-section--notifications">
-              <div className="settings-notif-header">
-                <button
-                  className="settings-section-toggle"
-                  type="button"
-                  aria-expanded={expandedSettings.notifications}
-                  aria-controls="settings-notifications-content"
-                  onClick={() => setExpandedSettings((current) => ({ ...current, notifications: !current.notifications }))}
-                >
-                  <span className="settings-section-icon"><Bell size={13} /></span>
-                  <span className="settings-section-title">
-                    <strong>{localize(language, 'Notifikasi Aplikasi', 'App Notifications')}</strong>
-                    <small>{localize(language, 'Atur notifikasi per aplikasi', 'Filter alerts per app')}</small>
-                  </span>
-                  <ChevronRight className="settings-section-chevron" size={14} />
-                </button>
-                <input
-                  className="settings-master-switch"
-                  type="checkbox"
-                  role="switch"
-                  aria-label={localize(language, 'Aktifkan notifikasi Windows', 'Enable Windows notifications')}
-                  checked={windowsNotificationNotices}
-                  onChange={(event) => onWindowsNotificationNoticesChange(event.target.checked)}
-                />
-              </div>
-              {expandedSettings.notifications && (
-                <div className="settings-section-content" id="settings-notifications-content">
-                  <div className="settings-activity-bar">
-                    <form
-                      className="settings-notif-add"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const name = newNotifApp.trim();
-                        if (!name) return;
-                        onNotificationAppFiltersChange({ ...notificationAppFilters, [name]: true });
-                        setNewNotifApp('');
-                      }}
-                    >
-                      <input
-                        type="text"
-                        value={newNotifApp}
-                        placeholder={localize(language, 'Tambah nama app…', 'Add app name…')}
-                        onChange={(event) => setNewNotifApp(event.target.value)}
-                      />
-                      <button type="submit" className="settings-activity-bulk" disabled={!newNotifApp.trim()}>+</button>
-                    </form>
-                    <button
-                      type="button"
-                      className="settings-activity-bulk"
-                      onClick={() => {
-                        const entries = Object.entries(notificationAppFilters);
-                        const allOn = entries.every(([, enabled]) => enabled);
-                        onNotificationAppFiltersChange(
-                          Object.fromEntries(entries.map(([name]) => [name, !allOn]))
-                        );
-                      }}
-                    >
-                      {Object.values(notificationAppFilters).every(Boolean)
-                        ? localize(language, 'Matikan semua', 'Disable all')
-                        : localize(language, 'Aktifkan semua', 'Enable all')}
-                    </button>
-                  </div>
-                  <div className="settings-activity-grid">
-                    {Object.entries(notificationAppFilters).map(([appName, enabled]) => (
-                      <button
-                        key={appName}
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        disabled={!windowsNotificationNotices}
-                        className={`settings-activity-chip${enabled && windowsNotificationNotices ? ' is-active' : ''}`}
-                        onClick={() => onNotificationAppFiltersChange({
-                          ...notificationAppFilters,
-                          [appName]: !enabled
-                        })}
-                      >
-                        <i className="settings-activity-chip__dot" aria-hidden="true" />
-                        <span>{appName}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
-
-            <section className="settings-section settings-section--activity">
-              <button
-                className="settings-section-toggle"
-                type="button"
-                aria-expanded={expandedSettings.activity}
-                aria-controls="settings-activity-content"
-                onClick={() => setExpandedSettings((current) => ({ ...current, activity: !current.activity }))}
-              >
-                <span className="settings-section-icon"><Activity size={13} /></span>
-                <span className="settings-section-title">
-                  <strong>{localize(language, 'Aktivitas Windows', 'Windows Activity')}</strong>
-                  <small>{localize(language, 'Filter indikator sistem', 'Filter system indicators')}</small>
-                </span>
-                <span className="settings-enabled-count">
-                  {Object.values(activityModuleSettings).filter(Boolean).length}/{ACTIVITY_MODULES.length}
-                </span>
-                <ChevronRight className="settings-section-chevron" size={14} />
-              </button>
-              {expandedSettings.activity && (
-                <div className="settings-section-content" id="settings-activity-content">
-                  <div className="settings-activity-bar">
-                    <button
-                      type="button"
-                      className="settings-activity-bulk"
-                      onClick={() => {
-                        const allEnabled = ACTIVITY_MODULES.every(({ id }) => activityModuleSettings[id]);
-                        const next = Object.fromEntries(
-                          ACTIVITY_MODULES.map(({ id }) => [id, !allEnabled])
-                        ) as ActivityModuleSettings;
-                        onActivityModuleSettingsChange(next);
-                      }}
-                    >
-                      {ACTIVITY_MODULES.every(({ id }) => activityModuleSettings[id])
-                        ? localize(language, 'Matikan semua', 'Disable all')
-                        : localize(language, 'Aktifkan semua', 'Enable all')}
-                    </button>
-                  </div>
-                  <div className="settings-activity-grid">
-                    {ACTIVITY_MODULES.map(({ id, label }) => {
-                      const enabled = activityModuleSettings[id];
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          role="switch"
-                          aria-checked={enabled}
-                          className={`settings-activity-chip${enabled ? ' is-active' : ''}`}
-                          onClick={() => onActivityModuleSettingsChange({
-                            ...activityModuleSettings,
-                            [id]: !enabled
-                          })}
-                        >
-                          <i className="settings-activity-chip__dot" aria-hidden="true" />
-                          <span>{getActivityModuleLabel(id, label, language)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </section>
-
-            <p className="settings-group-label">{localize(language, 'INTEGRASI', 'INTEGRATIONS')}</p>
-            <section className="settings-section settings-section--clickup">
-              <button
-                className="settings-section-toggle"
-                type="button"
-                aria-expanded={expandedSettings.clickUp}
-                aria-controls="settings-clickup-content"
-                onClick={() => setExpandedSettings((current) => ({ ...current, clickUp: !current.clickUp }))}
-              >
-                <span className="settings-section-icon"><KeyRound size={13} /></span>
-                <span className="settings-section-title">
-                  <strong>ClickUp</strong>
-                  <small>{localize(language, 'API key & daftar task', 'API key & task lists')}</small>
-                </span>
-                <ChevronRight className="settings-section-chevron" size={14} />
-              </button>
-              {expandedSettings.clickUp && (
-                <div className="settings-section-content" id="settings-clickup-content">
-                  <form className="settings-clickup-form" onSubmit={(event) => { void saveClickUpSettings(event); }}>
-                    <label className="settings-clickup-field">
-                      <span>API Key</span>
-                      <input
-                        type="password"
-                        autoComplete="new-password"
-                        value={clickUpApiKeyDraft}
-                        onChange={(event) => setClickUpApiKeyDraft(event.target.value)}
-                        placeholder={clickUpConfig?.api_key_configured ? localize(language, 'Tersimpan (kosongkan jika tetap)', 'Saved (leave blank to keep)') : 'pk_…'}
-                      />
-                    </label>
-                    <label className="settings-clickup-field">
-                      <span>{localize(language, 'List ID (pisah koma)', 'List IDs (comma-separated)')}</span>
-                      <input
-                        value={clickUpListIdsDraft}
-                        onChange={(event) => setClickUpListIdsDraft(event.target.value)}
-                        placeholder="901613807168"
-                        required
-                      />
-                    </label>
-                    <small className="settings-clickup-help">{localize(language, 'Tersimpan di settings.json', 'Saved in settings.json')}</small>
-                    {clickUpSettingsStatus && <p className="clickup-status" role="status">{localizeMessage(language, clickUpSettingsStatus)}</p>}
-                    <button className="tool-primary" type="submit" disabled={clickUpSettingsBusy}>
-                      {clickUpSettingsBusy ? localize(language, 'Menyimpan…', 'Saving…') : localize(language, 'Simpan', 'Save')}
-                    </button>
-                  </form>
-                </div>
-              )}
-            </section>
           </div>
         )}
           </m.div>

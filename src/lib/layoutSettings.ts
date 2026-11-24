@@ -2,7 +2,7 @@ import { readAppSetting, saveAppSetting } from './storage';
 
 export type IdleWidgetId = 'pet' | 'privacy' | 'live' | 'clock' | 'date' | 'battery';
 export type LauncherItemId = 'tools' | 'music' | 'monitor' | 'ai' | 'capture' | 'lock';
-export type ToolTabId = 'focus' | 'tasks' | 'notes' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
+export type ToolTabId = 'focus' | 'tasks' | 'notes' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture';
 export type LayoutPresetId = 'balanced' | 'minimal' | 'dashboard' | 'focus-mode';
 export type ToolsNavLayout = 'auto' | 'top' | 'left' | 'right';
 export type LauncherColumns = 2 | 3 | 4;
@@ -33,7 +33,7 @@ export const LAYOUT_SETTINGS_KEY = 'di-island-layout';
 
 const ALL_IDLE_WIDGETS: IdleWidgetId[] = ['pet', 'privacy', 'live', 'clock', 'date', 'battery'];
 const ALL_LAUNCHER_ITEMS: LauncherItemId[] = ['tools', 'music', 'monitor', 'ai', 'capture', 'lock'];
-const ALL_TOOL_TABS: ToolTabId[] = ['focus', 'tasks', 'notes', 'ai', 'clipboard', 'shelf', 'prayer', 'capture', 'settings'];
+const ALL_TOOL_TABS: ToolTabId[] = ['focus', 'tasks', 'notes', 'ai', 'clipboard', 'shelf', 'prayer', 'capture'];
 
 export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
   balanced: {
@@ -64,8 +64,7 @@ export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
       { id: 'clipboard', visible: true },
       { id: 'shelf', visible: true },
       { id: 'prayer', visible: true },
-      { id: 'capture', visible: true },
-      { id: 'settings', visible: true }
+      { id: 'capture', visible: true }
     ],
     toolsNavLayout: 'auto',
     toolsTabLabels: false
@@ -94,8 +93,8 @@ export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
       { id: 'focus', visible: true },
       { id: 'ai', visible: true },
       { id: 'capture', visible: true },
-      { id: 'settings', visible: true },
       { id: 'tasks', visible: false },
+      { id: 'notes', visible: false },
       { id: 'clipboard', visible: false },
       { id: 'shelf', visible: false },
       { id: 'prayer', visible: false }
@@ -131,7 +130,7 @@ export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
       { id: 'clipboard', visible: true },
       { id: 'shelf', visible: true },
       { id: 'prayer', visible: true },
-      { id: 'settings', visible: true }
+      { id: 'notes', visible: true }
     ],
     toolsNavLayout: 'left',
     toolsTabLabels: false
@@ -160,7 +159,7 @@ export const LAYOUT_PRESETS: Record<LayoutPresetId, IslandLayoutSettings> = {
       { id: 'focus', visible: true },
       { id: 'tasks', visible: true },
       { id: 'prayer', visible: true },
-      { id: 'settings', visible: true },
+      { id: 'notes', visible: true },
       { id: 'ai', visible: false },
       { id: 'clipboard', visible: false },
       { id: 'shelf', visible: false },
@@ -238,7 +237,7 @@ export function normalizeLayoutSettings(raw: unknown): IslandLayoutSettings {
     launcherItems: normalizeItemList(record.launcherItems, ALL_LAUNCHER_ITEMS, defaults.launcherItems),
     launcherColumns: cols === 2 || cols === 3 || cols === 4 ? cols : defaults.launcherColumns,
     customShortcuts,
-    toolsTabs: normalizeItemList(record.toolsTabs, ALL_TOOL_TABS, defaults.toolsTabs, 'settings'),
+    toolsTabs: normalizeItemList(record.toolsTabs, ALL_TOOL_TABS, defaults.toolsTabs, 'focus'),
     toolsNavLayout: typeof nav === 'string' && validNavs.includes(nav as ToolsNavLayout)
       ? (nav as ToolsNavLayout)
       : defaults.toolsNavLayout,
