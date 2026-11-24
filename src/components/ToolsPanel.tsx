@@ -12,7 +12,7 @@ import LayoutEditor from './LayoutEditor';
 import SlideDigits from './SlideDigits';
 import { localize, type AppLanguage } from '../lib/i18n';
 import { readAppSetting, saveAppSetting } from '../lib/storage';
-import type { AnimationSpeed, ClickThroughMode, ClockFormat, DateFormatStyle, IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
+import type { AnimationSpeed, ClickThroughMode, ClockFormat, DateFormatStyle, IdleDisplayStyle, IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
 import type { IslandLayoutSettings, ToolTabId } from '../lib/layoutSettings';
 import { parseConfigBundle, readSavedProfiles, saveProfiles, serializeConfigBundle, type SavedIslandProfile } from '../lib/profiles';
 
@@ -139,6 +139,7 @@ interface ToolsPanelProps {
   openSettingsRequest: number;
   openTabRequest: { tab: ToolTabId; seq: number } | null;
   onFocusStateChange?: (state: FocusLiveState) => void;
+  onNextPrayerChange?: (label: string | null) => void;
 }
 
 type ToolTab = 'focus' | 'tasks' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
@@ -341,7 +342,7 @@ export default function ToolsPanel({
   onNotificationAppFiltersChange, onClose, onReturnToMenu, onClearClipboard,
   onRemoveShelfItem, onCopyClipboard, onNotice, onCapture, onScreenshot,
   islandPosition, onIslandPositionChange, windhawkSettings, onWindhawkSettingsChange,
-  layoutSettings, onLayoutSettingsChange, openSettingsRequest, openTabRequest, onFocusStateChange
+  layoutSettings, onLayoutSettingsChange, openSettingsRequest, openTabRequest, onFocusStateChange, onNextPrayerChange
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolTab>('focus');
   const [capturePaths, setCapturePaths] = useState<string[]>([]);
@@ -441,7 +442,7 @@ export default function ToolsPanel({
   const [clickUpStatus, setClickUpStatus] = useState('');
   const [prayerReminders, setPrayerReminders] = useState(() => readStored('di-prayer-reminders', false));
   const [now, setNow] = useState(Date.now());
-  const [location, setLocation] = useState<PrayerLocation | null>(null);
+  const [location, setLocation] = useState<PrayerLocation | null>(() => readStored<PrayerLocation | null>('di-prayer-location', null));
   const [locationStatus, setLocationStatus] = useState('Lokasi belum diambil');
   const [prayerTimes, setPrayerTimes] = useState<PrayerTime[]>([]);
   const [prayerStatus, setPrayerStatus] = useState('');
@@ -608,7 +609,9 @@ export default function ToolsPanel({
     setLocationStatus('Mencari lokasi…');
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        setLocation({ latitude: coords.latitude, longitude: coords.longitude });
+        const nextLoc = { latitude: coords.latitude, longitude: coords.longitude };
+        setLocation(nextLoc);
+        saveAppSetting('di-prayer-location', nextLoc);
         setLocationStatus('Lokasi saat ini');
       },
       (error) => {
@@ -674,6 +677,28 @@ export default function ToolsPanel({
 
   const currentTime = new Date(now).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const nextPrayer = prayerTimes.find(([, value]) => value > currentTime) ?? prayerTimes[0];
+  useEffect(() => {
+    if (!nextPrayer) {
+      onNextPrayerChange?.(null);
+      return;
+    }
+    const [name, timeStr] = nextPrayer;
+    const [hh, mm] = timeStr.split(':').map(Number);
+    const nowDate = new Date(now);
+    const target = new Date(nowDate);
+    target.setHours(hh || 0, mm || 0, 0, 0);
+    if (target.getTime() <= nowDate.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+    const diffMins = Math.max(1, Math.round((target.getTime() - nowDate.getTime()) / 60_000));
+    const hours = Math.floor(diffMins / 60);
+    const mins = diffMins % 60;
+    const countdown = hours > 0
+      ? `${hours}${localize(language, 'j', 'h')} ${mins}m`
+      : `${mins}m`;
+    onNextPrayerChange?.(`${name} · ${countdown}`);
+  }, [nextPrayer, now, language, onNextPrayerChange]);
+
   useEffect(() => {
     if (!prayerReminders || !prayerTimes.length) return;
     const date = new Date(now);
@@ -1387,6 +1412,32 @@ export default function ToolsPanel({
                         <option value="capsule">{localize(language, 'Kapsul (bulat penuh)', 'Capsule (full pill)')}</option>
                         <option value="sharp">{localize(language, 'Minimal (tajam)', 'Minimal Sharp')}</option>
                         <option value="cyber">{localize(language, 'Cyber (sudut potong)', 'Cyber Chamfer')}</option>
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="settings-section settings-position-section">
+                    <label className="settings-language-field">
+                      <span>{localize(language, 'Mode tampilan Idle', 'Idle display mode')}</span>
+                      <select
+                        value={windhawkSettings.appearance.idleStyle}
+                        onChange={(event) => {
+                          const value = event.target.value as IdleDisplayStyle;
+                          const valid: IdleDisplayStyle[] = ['standard', 'stealth', 'prayer', 'dual', 'hud', 'vinyl', 'ticker'];
+                          if (!valid.includes(value)) return;
+                          onWindhawkSettingsChange({
+                            ...windhawkSettings,
+                            appearance: { ...windhawkSettings.appearance, idleStyle: value }
+                          });
+                        }}
+                      >
+                        <option value="standard">{localize(language, 'Standar', 'Standard')}</option>
+                        <option value="stealth">{localize(language, 'Stealth (ramping, mekar saat hover)', 'Stealth (micro, expand on hover)')}</option>
+                        <option value="prayer">{localize(language, 'Countdown jadwal salat', 'Prayer countdown')}</option>
+                        <option value="dual">{localize(language, 'Dual-Pill Split (gaya iPhone)', 'Dual-Pill Split (iPhone style)')}</option>
+                        <option value="hud">{localize(language, 'HUD Developer / Gamer (CPU/RAM)', 'Developer / Gamer HUD')}</option>
+                        <option value="vinyl">{localize(language, 'Vinyl Spin (piringan hitam)', 'Vinyl Spin disc')}</option>
+                        <option value="ticker">{localize(language, 'Smart Status Ticker', 'Smart Status Ticker')}</option>
                       </select>
                     </label>
                   </section>

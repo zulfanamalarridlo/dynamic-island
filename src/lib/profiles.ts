@@ -2,6 +2,7 @@ import {
   mergeSettings,
   WINDHAWK_SETTINGS_DEFAULTS,
   type ClickThroughMode,
+  type IdleDisplayStyle,
   type PetStyle,
   type WindhawkSettings
 } from './appearanceSettings';
@@ -26,6 +27,10 @@ function sanitizeProfileSettings(raw: unknown): WindhawkSettings {
   const validClickThrough: ClickThroughMode[] = ['off', 'always', 'hold-alt-pass', 'hold-alt-interact'];
   if (!validClickThrough.includes(settings.appearance.clickThroughMode)) {
     settings.appearance.clickThroughMode = 'off';
+  }
+  const validIdleStyles: IdleDisplayStyle[] = ['standard', 'stealth', 'prayer', 'dual', 'hud', 'vinyl', 'ticker'];
+  if (!validIdleStyles.includes(settings.appearance.idleStyle)) {
+    settings.appearance.idleStyle = 'standard';
   }
   return settings;
 }

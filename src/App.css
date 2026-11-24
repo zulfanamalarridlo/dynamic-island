@@ -7474,6 +7474,345 @@ body,
   height: 132px;
 }
 
+/* Side Lyrics: Horizontal Multi-Line Wrap (enter ke bawah saat panjang) */
+.idle-lyric-pill--side {
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  height: 132px;
+  padding: 6px 5px;
+  gap: 4px;
+  border-radius: 10px;
+}
+
+.idle-lyric-pill--side .idle-lyric-pill__viewport,
+.island-idle--side .idle-pin-card__subwrap.has-lyric {
+  width: 100%;
+  height: auto;
+  flex: 1 1 0;
+  min-height: 54px;
+  max-height: 90px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  padding: 2px 2px;
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
+
+.idle-lyric-pill--side .idle-lyric-pill__text,
+.island-idle--side .idle-pin-card__subwrap.has-lyric .idle-pin-card__lyric,
+.idle-lyric-pill--side.is-marquee .idle-lyric-pill__text,
+.island-idle--side .idle-pin-card__subwrap.has-lyric.is-marquee .idle-pin-card__lyric {
+  writing-mode: horizontal-tb !important;
+  text-orientation: initial !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  width: 100%;
+  height: auto !important;
+  padding: 0 !important;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.25 !important;
+  text-align: center !important;
+  white-space: normal !important;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: idle-lyric-in 240ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+/* 1. Stealth Micro Pill */
+.idle-stealth {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.idle-stealth--side {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.idle-stealth__clock {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.idle-stealth--side .idle-stealth__clock {
+  flex-direction: column;
+  gap: 1px;
+  font-size: 10px;
+}
+
+.idle-stealth__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.idle-stealth__dots i {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.idle-stealth__dots i.is-music { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+.idle-stealth__dots i.is-focus { background: #60a5fa; box-shadow: 0 0 6px #60a5fa; }
+.idle-stealth__dots i.is-privacy { background: #f87171; box-shadow: 0 0 6px #f87171; }
+
+/* 2. Prayer Countdown Pill */
+.idle-prayer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 112px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  border-radius: 99px;
+  background: rgba(16, 185, 129, 0.14);
+  color: #d1fae5;
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.idle-prayer-pill__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.7);
+  flex: 0 0 5px;
+}
+
+.island-idle--side .idle-prayer-pill {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  padding: 3px 4px;
+  font-size: 8px;
+  justify-content: center;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.15;
+}
+
+/* 3. Dual-Pill Split (iPhone Dynamic Island Style) */
+.island-shell--dual-idle {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.island-idle--dual {
+  gap: 6px !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.island-idle--dual > * {
+  border-radius: 999px;
+  background: rgba(10, 12, 18, var(--island-pill-opacity, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 4px 10px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.island-idle--dual.island-idle--side > * {
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  padding: 5px 4px;
+}
+
+/* 4. Developer / Gamer HUD */
+.idle-hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  padding: 0 10px;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+.idle-hud--side {
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px;
+}
+
+.idle-hud__clock {
+  border: 0;
+  background: transparent;
+  color: #f8fafc;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.idle-hud__metrics {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.idle-hud--side .idle-hud__metrics {
+  flex-direction: column;
+  width: 100%;
+  gap: 5px;
+}
+
+.idle-hud__stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+}
+
+.idle-hud--side .idle-hud__stat {
+  width: 100%;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.idle-hud__stat em {
+  font-style: normal;
+  color: #64748b;
+  font-size: 8.5px;
+}
+
+.idle-hud__stat strong {
+  color: #e2e8f0;
+  font-size: 9.5px;
+}
+
+.idle-hud__bar {
+  display: block;
+  width: 24px;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.idle-hud--side .idle-hud__bar {
+  width: 100%;
+}
+
+.idle-hud__bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 350ms ease;
+}
+
+/* 5. Vinyl Spin Mode */
+.island-idle--vinyl .idle-pin-card__icon,
+.island-idle--vinyl .idle-lyric-pill__art {
+  position: relative;
+  border-radius: 50% !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  animation: idle-vinyl-spin 6s linear infinite;
+  animation-play-state: paused;
+}
+
+.island-idle--vinyl .idle-pin-card--media.is-playing .idle-pin-card__icon,
+.island-idle--vinyl .idle-lyric-pill .idle-lyric-pill__art {
+  animation-play-state: running;
+}
+
+.island-idle--vinyl .idle-pin-card__icon::after,
+.island-idle--vinyl .idle-lyric-pill__art::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #0b0d12;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+@keyframes idle-vinyl-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* 6. Smart Status Ticker */
+.idle-ticker-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 132px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+  font-size: 9.5px;
+  font-weight: 500;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.idle-ticker-pill__text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: idle-lyric-in 260ms ease-out;
+}
+
+.island-idle--side .idle-ticker-pill {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  padding: 3px 4px;
+  font-size: 8px;
+  justify-content: center;
+}
+
+.island-idle--side .idle-ticker-pill__text {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.15;
+}
+
 .island-anim-off,
 .island-anim-off *,
 .island-anim-off *::before,

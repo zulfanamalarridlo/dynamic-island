@@ -170,6 +170,9 @@ export default function DynamicIsland() {
   const notificationAppFiltersRef = useRef(notificationAppFilters);
   const noticeDurationMsRef = useRef(4000);
   const [clickThroughActive, setClickThroughActive] = useState(false);
+  const [idleHovered, setIdleHovered] = useState(false);
+  const [nextPrayerLabel, setNextPrayerLabel] = useState<string | null>(null);
+  const [tickerIndex, setTickerIndex] = useState(0);
   const [idleSyncedLyrics, setIdleSyncedLyrics] = useState<SyncedLine[]>([]);
   const [idleMediaPosition, setIdleMediaPosition] = useState(0);
   const lastWheelAtRef = useRef(0);
@@ -268,6 +271,14 @@ export default function DynamicIsland() {
     const timer = window.setInterval(() => setTime(new Date()), intervalMs);
     return () => window.clearInterval(timer);
   }, [windhawkSettings.appearance.showSeconds]);
+
+  useEffect(() => {
+    if (windhawkSettings.appearance.idleStyle !== 'ticker') return;
+    const timer = window.setInterval(() => {
+      setTickerIndex((current) => (current + 1) % 3);
+    }, 6_000);
+    return () => window.clearInterval(timer);
+  }, [windhawkSettings.appearance.idleStyle]);
 
   const selectedMonitorIndex = windhawkSettings.appearance.monitorIndex >= 0
     ? windhawkSettings.appearance.monitorIndex
@@ -759,23 +770,62 @@ export default function DynamicIsland() {
   const idleMediaProgress = sysData.media && sysData.media.duration_seconds > 0
     ? Math.max(0, Math.min(100, (idleMediaPosition / sysData.media.duration_seconds) * 100))
     : 0;
-  const topIdleMaxWidth = Math.min(viewport.width - 24, Math.max(topPanelWidth, 548));
+  const idleStyle = windhawkSettings.appearance.idleStyle;
+  const isStealthCollapsed = islandMode === 'idle' && idleStyle === 'stealth' && !idleHovered;
+  const isDualIdle = islandMode === 'idle' && idleStyle === 'dual';
+  const isHudIdle = idleStyle === 'hud';
+  const isVinylIdle = idleStyle === 'vinyl';
+  const showPrayerPill = idleStyle === 'prayer' && !isStealthCollapsed;
+  const showTickerPill = idleStyle === 'ticker' && !isStealthCollapsed && !mediaPinned && !showIdleLyricPill;
 
-  const idleWidth = isSidePosition
-    ? Math.min(sideWidth, hasPinnedIdleContent ? 82 : showSideIdleLyric ? 56 : 48)
-    : hasPinnedIdleContent
-      ? Math.min(topIdleMaxWidth, mediaPinned && monitorPinned ? 544 : mediaPinned ? 476 : 348)
-      : showTopIdleLyric
-        ? Math.min(topIdleMaxWidth, 468)
-        : Math.min(topIdleMaxWidth, Math.max(96, baseIdleWidth) + privacyExtraWidth + liveExtraWidth);
+  const greetingText = (() => {
+    const h = time.getHours();
+    if (h < 11) return localize(language, 'Selamat pagi', 'Good morning');
+    if (h < 15) return localize(language, 'Selamat siang', 'Good afternoon');
+    if (h < 18) return localize(language, 'Selamat sore', 'Good evening');
+    return localize(language, 'Selamat malam', 'Good night');
+  })();
+  const tickerItems = [
+    greetingText,
+    nextPrayerLabel
+      ? `🕌 ${nextPrayerLabel}`
+      : focusLive.running
+        ? `⏱ ${focusFormatted}`
+        : `${localize(language, 'Baterai', 'Battery')} ${batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}`,
+    sysData.isWifiConnected
+      ? `Wi-Fi · ${sysData.activeWifiName || 'Online'}`
+      : localize(language, 'Mode offline', 'Offline mode')
+  ];
+  const activeTickerText = tickerItems[tickerIndex % tickerItems.length];
+
+  const topIdleMaxWidth = Math.min(viewport.width - 24, Math.max(topPanelWidth, 560));
+  const extraModeTopWidth = (showPrayerPill ? 114 : 0) + (showTickerPill ? 132 : 0) + (isDualIdle ? 18 : 0);
+
+  const idleWidth = isStealthCollapsed
+    ? (isSidePosition ? 40 : 104)
+    : isHudIdle
+      ? (isSidePosition ? Math.min(sideWidth, 82) : Math.min(topIdleMaxWidth, 344))
+      : isSidePosition
+        ? Math.min(sideWidth, hasPinnedIdleContent ? 88 : showSideIdleLyric ? 84 : (showPrayerPill || showTickerPill) ? 74 : 48)
+        : hasPinnedIdleContent
+          ? Math.min(topIdleMaxWidth, (mediaPinned && monitorPinned ? 544 : mediaPinned ? 476 : 348) + (showPrayerPill ? 104 : 0) + (isDualIdle ? 18 : 0))
+          : showTopIdleLyric
+            ? Math.min(topIdleMaxWidth, 468 + (showPrayerPill ? 104 : 0) + (isDualIdle ? 18 : 0))
+            : Math.min(topIdleMaxWidth, Math.max(96, baseIdleWidth) + privacyExtraWidth + liveExtraWidth + extraModeTopWidth);
   const sideFocusExtraHeight = isSidePosition && focusLive.running ? 34 : 0;
-  const idleHeight = isSidePosition
-    ? Math.min(
-      sideHeight,
-      (monitorPinned ? (mediaPinned ? 348 : 236) : mediaPinned ? 232 : showSideIdleLyric ? 248 : 118)
-        + sideFocusExtraHeight
-    )
-    : monitorPinned ? 48 : (mediaPinned || showTopIdleLyric) ? 48 : 38;
+  const sideModeExtraHeight = isSidePosition && (showPrayerPill || showTickerPill) ? 34 : 0;
+  const idleHeight = isStealthCollapsed
+    ? (isSidePosition ? 68 : 28)
+    : isHudIdle
+      ? (isSidePosition ? Math.min(sideHeight, 178) : 38)
+      : isSidePosition
+        ? Math.min(
+          sideHeight,
+          (monitorPinned ? (mediaPinned ? 348 : 236) : mediaPinned ? 236 : showSideIdleLyric ? 248 : 118)
+            + sideFocusExtraHeight
+            + sideModeExtraHeight
+        )
+        : monitorPinned ? 48 : (mediaPinned || showTopIdleLyric) ? 48 : 38;
 
   const edgeOffset = Number.isFinite(windhawkSettings.appearance.edgeOffset)
     ? Math.min(48, Math.max(0, windhawkSettings.appearance.edgeOffset))
@@ -989,7 +1039,7 @@ export default function DynamicIsland() {
     <LazyMotion features={domMax}>
     <div className="w-screen h-screen flex items-start justify-start overflow-hidden box-border select-none">
       <div
-        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''}${hasGradientBg ? ' island-shell--gradient' : ''}${hasBorderGlow ? ' island-shell--glow' : ''}${hasMusicGlow ? ' island-shell--music-glow' : ''}${focusLive.running ? ` island-shell--focus-aura${focusLive.isBreak ? ' is-break' : ''}` : ''}${clickThroughActive ? ' island-shell--click-through' : ''}${animSpeed === 'off' ? ' island-anim-off' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
+        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''}${hasGradientBg ? ' island-shell--gradient' : ''}${hasBorderGlow ? ' island-shell--glow' : ''}${hasMusicGlow ? ' island-shell--music-glow' : ''}${focusLive.running ? ` island-shell--focus-aura${focusLive.isBreak ? ' is-break' : ''}` : ''}${clickThroughActive ? ' island-shell--click-through' : ''}${isDualIdle ? ' island-shell--dual-idle' : ''}${isStealthCollapsed ? ' island-shell--stealth' : ''}${animSpeed === 'off' ? ' island-anim-off' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
         style={{
           ...islandStyle,
           ...('borderRadius' in activeVariant
@@ -1003,10 +1053,12 @@ export default function DynamicIsland() {
         }}
         onWheel={handleIdleWheel}
         onPointerEnter={() => {
+          setIdleHovered(true);
           if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
           closeDelayTimer.current = null;
         }}
         onPointerLeave={() => {
+          setIdleHovered(false);
           if (islandModeRef.current === 'idle' || islandModeRef.current === 'tools' || islandModeRef.current === 'systemMonitor') return;
           if (closeDelayTimer.current) clearTimeout(closeDelayTimer.current);
           closeDelayTimer.current = window.setTimeout(() => {
@@ -1035,12 +1087,62 @@ export default function DynamicIsland() {
           {islandMode === 'idle' && (
             <m.div
               key="idle"
-              className={`island-idle${isSidePosition ? ' island-idle--side' : ' island-idle--top'}${hasPinnedIdleContent ? ' island-idle--pinned' : ''}`}
+              className={`island-idle${isSidePosition ? ' island-idle--side' : ' island-idle--top'}${hasPinnedIdleContent ? ' island-idle--pinned' : ''}${isVinylIdle ? ' island-idle--vinyl' : ''}${isDualIdle ? ' island-idle--dual' : ''}${isHudIdle ? ' island-idle--hud' : ''}`}
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.99 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             >
+              {isStealthCollapsed ? (
+                <button
+                  type="button"
+                  className={`idle-stealth${isSidePosition ? ' idle-stealth--side' : ''}`}
+                  onClick={openLauncher}
+                  aria-label={localize(language, 'Buka menu', 'Open menu')}
+                >
+                  <span className="idle-stealth__clock">
+                    {isSidePosition
+                      ? (
+                        <>
+                          <span>{String(time.getHours()).padStart(2, '0')}</span>
+                          <span>{String(time.getMinutes()).padStart(2, '0')}</span>
+                        </>
+                      )
+                      : formattedTime.replace('.', ':')}
+                  </span>
+                  <span className="idle-stealth__dots" aria-hidden="true">
+                    {sysData.media?.is_playing && <i className="is-music" />}
+                    {focusLive.running && <i className="is-focus" />}
+                    {hasPrivacyAlert && <i className="is-privacy" />}
+                    {!sysData.media?.is_playing && !focusLive.running && !hasPrivacyAlert && (
+                      <i className="is-idle" style={{ background: batteryColor }} />
+                    )}
+                  </span>
+                </button>
+              ) : isHudIdle ? (
+                <div className={`idle-hud${isSidePosition ? ' idle-hud--side' : ''}`}>
+                  <button type="button" className="idle-hud__clock" onClick={openLauncher}>
+                    {isSidePosition ? `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}` : formattedTime.replace('.', ':')}
+                  </button>
+                  <button type="button" className="idle-hud__metrics" onClick={openSystemMonitor}>
+                    <span className="idle-hud__stat">
+                      <em>CPU</em>
+                      <strong>{sysData.cpuUsage === null ? '—' : `${Math.round(sysData.cpuUsage)}%`}</strong>
+                      <span className="idle-hud__bar"><i style={{ width: `${Math.min(100, Math.max(0, sysData.cpuUsage ?? 0))}%`, background: '#60a5fa' }} /></span>
+                    </span>
+                    <span className="idle-hud__stat">
+                      <em>RAM</em>
+                      <strong>{sysData.memoryUsedBytes !== null && sysData.memoryTotalBytes ? `${Math.round((sysData.memoryUsedBytes / sysData.memoryTotalBytes) * 100)}%` : '—'}</strong>
+                      <span className="idle-hud__bar"><i style={{ width: `${sysData.memoryUsedBytes !== null && sysData.memoryTotalBytes ? Math.min(100, Math.round((sysData.memoryUsedBytes / sysData.memoryTotalBytes) * 100)) : 0}%`, background: '#c084fc' }} /></span>
+                    </span>
+                    <span className="idle-hud__stat">
+                      <em>BAT</em>
+                      <strong style={{ color: batteryColor }}>{batteryAvailable ? `${Math.round(batteryLevel)}%` : '—'}</strong>
+                    </span>
+                  </button>
+                </div>
+              ) : (
+              <>
               {(() => {
                 let clockRendered = false;
                 const renderClockButton = (key: string) => {
@@ -1177,6 +1279,27 @@ export default function DynamicIsland() {
                       </button>
                     )}
                     {nodes}
+                    {showPrayerPill && (
+                      <button
+                        type="button"
+                        className="idle-prayer-pill"
+                        onClick={() => openToolsTab('prayer')}
+                        title={localize(language, 'Buka jadwal salat', 'Open prayer schedule')}
+                      >
+                        <span className="idle-prayer-pill__dot" aria-hidden="true" />
+                        <span>{nextPrayerLabel || localize(language, 'Jadwal salat', 'Prayer time')}</span>
+                      </button>
+                    )}
+                    {showTickerPill && (
+                      <button
+                        type="button"
+                        className="idle-ticker-pill"
+                        onClick={openLauncher}
+                        title={activeTickerText}
+                      >
+                        <span key={activeTickerText} className="idle-ticker-pill__text">{activeTickerText}</span>
+                      </button>
+                    )}
                     {showIdleLyricPill && (
                       <button
                         type="button"
@@ -1315,6 +1438,8 @@ export default function DynamicIsland() {
                   </span>
                 </button>
               )}
+              </>
+              )}
             </m.div>
           )}
 
@@ -1426,6 +1551,7 @@ export default function DynamicIsland() {
             openSettingsRequest={openSettingsRequest}
             openTabRequest={openTabRequest}
             onFocusStateChange={setFocusLive}
+            onNextPrayerChange={setNextPrayerLabel}
           />
         </m.div>
       </div>

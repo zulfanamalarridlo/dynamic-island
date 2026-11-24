@@ -8,10 +8,12 @@ export type ClockFormat = '24h' | '12h';
 export type DateFormatStyle = 'short' | 'numeric' | 'full';
 export type AnimationSpeed = 'snappy' | 'normal' | 'smooth' | 'off';
 export type ClickThroughMode = 'off' | 'always' | 'hold-alt-pass' | 'hold-alt-interact';
+export type IdleDisplayStyle = 'standard' | 'stealth' | 'prayer' | 'dual' | 'hud' | 'vinyl' | 'ticker';
 
 export const WINDHAWK_SETTINGS_DEFAULTS = {
   appearance: {
     shapeStyle: 'default',
+    idleStyle: 'standard',
     sizeScale: '1.0',
     petStyle: 'luffy',
     customPetImage: '',
@@ -49,6 +51,7 @@ export const WINDHAWK_SETTINGS_DEFAULTS = {
 export type WindhawkSettings = {
   appearance: {
     shapeStyle: IslandShapeStyle;
+    idleStyle: IdleDisplayStyle;
     sizeScale: '0.8' | '1.0' | '1.2' | '1.5' | '1.8' | '2.0' | '2.5';
     petStyle: PetStyle;
     customPetImage: string;
@@ -111,6 +114,10 @@ export function readWindhawkSettings(): WindhawkSettings {
   const validClickThrough: ClickThroughMode[] = ['off', 'always', 'hold-alt-pass', 'hold-alt-interact'];
   if (!validClickThrough.includes(merged.appearance.clickThroughMode)) {
     merged.appearance.clickThroughMode = 'off';
+  }
+  const validIdleStyles: IdleDisplayStyle[] = ['standard', 'stealth', 'prayer', 'dual', 'hud', 'vinyl', 'ticker'];
+  if (!validIdleStyles.includes(merged.appearance.idleStyle)) {
+    merged.appearance.idleStyle = 'standard';
   }
   return merged;
 }
