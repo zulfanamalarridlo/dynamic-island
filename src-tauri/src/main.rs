@@ -264,7 +264,11 @@ fn migrate_legacy_settings(
 }
 
 #[tauri::command]
-fn save_app_setting(key: String, value: serde_json::Value) -> Result<(), String> {
+fn save_app_setting(
+    app: tauri::AppHandle,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
     if !key.starts_with("di-") {
         return Err("Nama pengaturan aplikasi tidak valid".to_string());
     }
@@ -275,8 +279,13 @@ fn save_app_setting(key: String, value: serde_json::Value) -> Result<(), String>
     if settings.preferences.get(&key) == Some(&value) {
         return Ok(());
     }
-    settings.preferences.insert(key, value);
-    write_settings_unlocked(&settings)
+    settings.preferences.insert(key.clone(), value.clone());
+    write_settings_unlocked(&settings)?;
+    let _ = app.emit(
+        "app-setting-changed",
+        serde_json::json!({ "key": key, "value": value }),
+    );
+    Ok(())
 }
 
 fn validate_clickup_api_key(token: &str) -> Result<(), String> {
@@ -1602,6 +1611,49 @@ async fn set_system_volume(volume: f32) -> Result<(), String> {
         CoUninitialize();
         Ok(())
     }
+}
+
+fn toggle_audio_endpoint_mute(
+    flow: windows::Win32::Media::Audio::EDataFlow,
+) -> Result<bool, String> {
+    unsafe {
+        let _ = CoInitialize(None);
+        let result = (|| {
+            let enumerator: IMMDeviceEnumerator = windows::Win32::System::Com::CoCreateInstance(
+                &MMDeviceEnumerator,
+                None,
+                CLSCTX_ALL,
+            )
+            .map_err(|e| e.to_string())?;
+            let device = enumerator
+                .GetDefaultAudioEndpoint(flow, eConsole)
+                .map_err(|e| e.to_string())?;
+            let volume_control: IAudioEndpointVolume = device
+                .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+                .map_err(|e| e.to_string())?;
+            let currently_muted = volume_control
+                .GetMute()
+                .map_err(|e| e.to_string())?
+                .as_bool();
+            let next_muted = !currently_muted;
+            volume_control
+                .SetMute(next_muted, std::ptr::null())
+                .map_err(|e| e.to_string())?;
+            Ok(next_muted)
+        })();
+        CoUninitialize();
+        result
+    }
+}
+
+#[tauri::command]
+async fn toggle_output_mute() -> Result<bool, String> {
+    toggle_audio_endpoint_mute(eRender)
+}
+
+#[tauri::command]
+async fn toggle_microphone_mute() -> Result<bool, String> {
+    toggle_audio_endpoint_mute(eCapture)
 }
 
 fn is_lock_key_on(key: VIRTUAL_KEY) -> bool {
@@ -3540,6 +3592,39 @@ async fn set_windows_startup_config(
     })
 }
 
+fn open_or_focus_settings_window(app: &tauri::AppHandle) {
+    let app_clone = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(existing) = app_clone.get_webview_window("settings") {
+            let _ = existing.unminimize();
+            let _ = existing.show();
+            let _ = existing.set_focus();
+            return;
+        }
+        if let Err(error) = tauri::WebviewWindowBuilder::new(
+            &app_clone,
+            "settings",
+            tauri::WebviewUrl::App("index.html?view=settings".into()),
+        )
+        .title("Dynamic Island — Pengaturan")
+        .inner_size(780.0, 560.0)
+        .min_inner_size(640.0, 460.0)
+        .center()
+        .resizable(true)
+        .decorations(true)
+        .build()
+        {
+            eprintln!("Gagal membuka jendela pengaturan: {error}");
+        }
+    });
+}
+
+#[tauri::command]
+async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    open_or_focus_settings_window(&app);
+    Ok(())
+}
+
 fn open_settings_from_tray(app: &tauri::AppHandle) {
     if CLICK_THROUGH_MODE.load(Ordering::Relaxed) == 1 {
         CLICK_THROUGH_MODE.store(0, Ordering::Relaxed);
@@ -3547,20 +3632,7 @@ fn open_settings_from_tray(app: &tauri::AppHandle) {
         let _ = app.emit("click-through-mode-changed", "off");
         let _ = app.emit("click-through-state", false);
     }
-    let Some(window) = app.get_webview_window("main") else {
-        eprintln!("Tidak dapat membuka pengaturan tray: jendela utama tidak ditemukan");
-        return;
-    };
-    let _ = window.set_ignore_cursor_events(false);
-    if let Err(error) = window.show() {
-        eprintln!("Tidak dapat menampilkan jendela dari tray: {error}");
-    }
-    if let Err(error) = window.set_focus() {
-        eprintln!("Tidak dapat memfokuskan jendela dari tray: {error}");
-    }
-    if let Err(error) = app.emit("tray-open-settings", ()) {
-        eprintln!("Tidak dapat membuka halaman pengaturan dari tray: {error}");
-    }
+    open_or_focus_settings_window(app);
 }
 
 fn toggle_window_from_tray(app: &tauri::AppHandle) {
@@ -3686,6 +3758,8 @@ fn main() {
             set_display_brightness,
             request_windows_notification_access,
             set_system_volume,
+            toggle_output_mute,
+            toggle_microphone_mute,
             toggle_wifi,
             set_power_plan,
             scan_wifi,
@@ -3697,6 +3771,7 @@ fn main() {
             set_island_idle_state,
             get_windows_startup_config,
             set_windows_startup_config,
+            open_settings_window,
             lock_windows,
             open_snipping_tool,
             take_screenshot,

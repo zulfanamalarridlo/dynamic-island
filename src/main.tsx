@@ -1,17 +1,19 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import SettingsWindow from "./components/SettingsWindow";
 import { initializeAppSettings } from "./lib/storage";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("Elemen root aplikasi tidak ditemukan.");
 const root = ReactDOM.createRoot(rootElement);
+const isSettingsView = new URLSearchParams(window.location.search).get("view") === "settings";
 
 void initializeAppSettings()
   .then(() => {
     root.render(
       <React.StrictMode>
-        <App />
+        {isSettingsView ? <SettingsWindow /> : <App />}
       </React.StrictMode>,
     );
   })

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { openPath } from '@tauri-apps/plugin-opener';
+import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, m } from 'framer-motion';
 import {
-  Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, File, KeyRound, LayoutTemplate, ListTodo,
-  LocateFixed, Palette, Pause, Play, Plus, RotateCcw, Save, ScanText, Scissors, Settings, Smile, Sparkles, Trash2, Upload, X
+  Activity, AlarmClock, ArrowLeft, ArrowRight, Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clipboard, Copy, ExternalLink, File, KeyRound, LayoutTemplate, ListTodo,
+  LocateFixed, Palette, Pause, Pin, Play, Plus, RotateCcw, Save, ScanText, Scissors, Search, Settings, Smile, Sparkles, StickyNote, Trash2, Upload, X
 } from 'lucide-react';
 import AiChatTab from './AiChatTab';
 import LayoutEditor from './LayoutEditor';
@@ -142,11 +142,12 @@ interface ToolsPanelProps {
   onNextPrayerChange?: (label: string | null) => void;
 }
 
-type ToolTab = 'focus' | 'tasks' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
+type ToolTab = 'focus' | 'tasks' | 'notes' | 'ai' | 'clipboard' | 'shelf' | 'prayer' | 'capture' | 'settings';
 
 const TABS: { id: ToolTab; label: string }[] = [
   { id: 'focus', label: 'Focus' },
   { id: 'tasks', label: 'To-do' },
+  { id: 'notes', label: 'Notes' },
   { id: 'ai', label: 'AI' },
   { id: 'clipboard', label: 'Clipboard' },
   { id: 'shelf', label: 'Shelf' },
@@ -348,6 +349,9 @@ export default function ToolsPanel({
   const [capturePaths, setCapturePaths] = useState<string[]>([]);
   const [ocrRunning, setOcrRunning] = useState(false);
   const [ocrText, setOcrText] = useState<string | null>(null);
+  const [clipboardSearch, setClipboardSearch] = useState('');
+  const [pinnedClips, setPinnedClips] = useState<string[]>(() => readStored<string[]>('di-pinned-clipboard', []));
+  const [quickNotes, setQuickNotes] = useState<string>(() => readStored<string>('di-quick-notes', ''));
   const [newNotifApp, setNewNotifApp] = useState('');
   const [savedProfiles, setSavedProfiles] = useState<SavedIslandProfile[]>(readSavedProfiles);
   const [newProfileName, setNewProfileName] = useState('');
@@ -853,8 +857,18 @@ export default function ToolsPanel({
     }
   }, [visibleTabs, tab]);
 
+  const togglePinClip = (text: string) => {
+    setPinnedClips((current) => {
+      const next = current.includes(text)
+        ? current.filter((item) => item !== text)
+        : [text, ...current].slice(0, 12);
+      saveAppSetting('di-pinned-clipboard', next);
+      return next;
+    });
+  };
+
   const tabsIcon: Record<ToolTab, ReactNode> = {
-    focus: <AlarmClock size={15} />, tasks: <ListTodo size={15} />, ai: <Sparkles size={15} />, clipboard: <Clipboard size={15} />,
+    focus: <AlarmClock size={15} />, tasks: <ListTodo size={15} />, notes: <StickyNote size={15} />, ai: <Sparkles size={15} />, clipboard: <Clipboard size={15} />,
     shelf: <File size={15} />, prayer: <span>☾</span>, capture: <Camera size={15} />, settings: <Settings size={15} />
   };
 
@@ -865,13 +879,24 @@ export default function ToolsPanel({
     >
       <header className="tools-header">
         <button className="tools-back" aria-label={localize(language, 'Kembali ke menu', 'Back to menu')} onClick={onReturnToMenu}><ArrowLeft size={15} /></button>
-        <button className="tools-close" aria-label={localize(language, 'Tutup menu', 'Close menu')} onClick={onClose}><X size={15} /></button>
+        <div className="tools-header__actions">
+          <button
+            type="button"
+            className="tools-close"
+            aria-label={localize(language, 'Buka jendela pengaturan', 'Open settings window')}
+            title={localize(language, 'Buka jendela pengaturan terpisah', 'Open separate settings window')}
+            onClick={() => { void invoke('open_settings_window').catch(() => {}); }}
+          >
+            <Settings size={14} />
+          </button>
+          <button className="tools-close" aria-label={localize(language, 'Tutup menu', 'Close menu')} onClick={onClose}><X size={15} /></button>
+        </div>
       </header>
       <nav className="tools-tabs" aria-label={localize(language, 'Alat', 'Tools')}>
         {visibleTabs.map((item) => (
           <button
             key={item.id}
-            aria-label={item.id === 'settings' ? localize(language, 'Pengaturan', 'Settings') : item.id === 'focus' ? localize(language, 'Fokus', 'Focus') : item.id === 'tasks' ? 'To-do' : item.id === 'ai' ? 'AI Chat' : item.id === 'clipboard' ? 'Clipboard' : item.id === 'shelf' ? 'Shelf' : item.id === 'prayer' ? localize(language, 'Salat', 'Prayer') : localize(language, 'Tangkapan layar', 'Capture')}
+            aria-label={item.id === 'settings' ? localize(language, 'Pengaturan', 'Settings') : item.id === 'focus' ? localize(language, 'Fokus', 'Focus') : item.id === 'tasks' ? 'To-do' : item.id === 'notes' ? localize(language, 'Catatan', 'Notes') : item.id === 'ai' ? 'AI Chat' : item.id === 'clipboard' ? 'Clipboard' : item.id === 'shelf' ? 'Shelf' : item.id === 'prayer' ? localize(language, 'Salat', 'Prayer') : localize(language, 'Tangkapan layar', 'Capture')}
             aria-current={tab === item.id ? 'page' : undefined}
             className={tab === item.id ? 'tools-tab is-active' : 'tools-tab'}
             onClick={() => setTab(item.id)}
@@ -1015,19 +1040,138 @@ export default function ToolsPanel({
             )}
           </div>
         )}
-        {tab === 'clipboard' && (
-          <div className="tool-card">
-            <div className="tool-card-heading"><span className="tool-count">{clipboardItems.length} {localize(language, 'item', 'items')}</span><button className="tool-text-button" onClick={onClearClipboard}>{localize(language, 'Hapus semua', 'Clear all')}</button></div>
-            <div className="history-list">
-              {clipboardItems.length === 0 && <p className="tool-empty">{localize(language, 'Belum ada teks yang disalin.', 'No copied text yet.')}</p>}
-              {clipboardItems.map((item, index) => (
-                <button className="history-row" key={`${item.timestamp}-${index}`} title={localize(language, 'Klik untuk menyalin', 'Click to copy')} onClick={() => onCopyClipboard(item.text)}>
-                  <span>{item.text}</span><small>{new Date(item.timestamp).toLocaleTimeString(language === 'id' ? 'id-ID' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</small>
+        {tab === 'notes' && (
+          <div className="tool-card notes-card">
+            <div className="tool-card-heading">
+              <span className="tool-count">
+                {quickNotes.trim() ? `${quickNotes.trim().split(/\s+/).length} ${localize(language, 'kata', 'words')} · ${quickNotes.length}` : localize(language, 'Catatan cepat', 'Quick scratchpad')}
+              </span>
+              <div className="notes-actions">
+                <button
+                  type="button"
+                  className="tool-text-button"
+                  disabled={!quickNotes.trim()}
+                  onClick={() => {
+                    onCopyClipboard(quickNotes);
+                    onNotice(localize(language, 'Catatan disalin', 'Notes copied'), localize(language, 'Teks catatan disalin ke clipboard.', 'Scratchpad copied to clipboard.'));
+                  }}
+                >
+                  {localize(language, 'Salin', 'Copy')}
                 </button>
-              ))}
+                <button
+                  type="button"
+                  className="tool-text-button"
+                  disabled={!quickNotes}
+                  onClick={() => {
+                    setQuickNotes('');
+                    saveAppSetting('di-quick-notes', '');
+                  }}
+                >
+                  {localize(language, 'Hapus', 'Clear')}
+                </button>
+              </div>
             </div>
+            <textarea
+              className="notes-textarea"
+              value={quickNotes}
+              placeholder={localize(language, 'Tulis catatan kilat di sini… (tersimpan otomatis)', 'Write quick notes here… (auto-saved)')}
+              onChange={(event) => {
+                const value = event.target.value;
+                setQuickNotes(value);
+                saveAppSetting('di-quick-notes', value);
+              }}
+            />
           </div>
         )}
+        {tab === 'clipboard' && (() => {
+          const query = clipboardSearch.trim().toLowerCase();
+          const pinnedRows = pinnedClips.map((text) => ({ text, timestamp: 0, pinned: true }));
+          const historyRows = clipboardItems
+            .filter((item) => !pinnedClips.includes(item.text))
+            .map((item) => ({ ...item, pinned: false }));
+          const combined = [...pinnedRows, ...historyRows].filter((item) => (
+            !query || item.text.toLowerCase().includes(query)
+          ));
+          return (
+            <div className="tool-card">
+              <div className="tool-card-heading">
+                <span className="tool-count">
+                  {combined.length} {localize(language, 'item', 'items')}
+                  {pinnedClips.length > 0 ? ` · ${pinnedClips.length} pin` : ''}
+                </span>
+                <button className="tool-text-button" onClick={onClearClipboard}>{localize(language, 'Hapus riwayat', 'Clear history')}</button>
+              </div>
+              <div className="clipboard-search">
+                <Search size={12} />
+                <input
+                  type="text"
+                  value={clipboardSearch}
+                  placeholder={localize(language, 'Cari clipboard…', 'Search clipboard…')}
+                  onChange={(event) => setClipboardSearch(event.target.value)}
+                />
+                {clipboardSearch && (
+                  <button type="button" onClick={() => setClipboardSearch('')} aria-label="Clear search">
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
+              <div className="history-list">
+                {combined.length === 0 && (
+                  <p className="tool-empty">
+                    {query
+                      ? localize(language, 'Tidak ada item yang cocok.', 'No matching items.')
+                      : localize(language, 'Belum ada teks yang disalin.', 'No copied text yet.')}
+                  </p>
+                )}
+                {combined.map((item, index) => {
+                  const trimmed = item.text.trim();
+                  const isUrl = /^https?:\/\/\S+$/i.test(trimmed);
+                  const isHexColor = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(trimmed);
+                  return (
+                    <div className={`history-row-wrap${item.pinned ? ' is-pinned' : ''}`} key={`${item.pinned ? 'pin' : item.timestamp}-${index}`}>
+                      <button
+                        type="button"
+                        className="history-row"
+                        title={localize(language, 'Klik untuk menyalin', 'Click to copy')}
+                        onClick={() => onCopyClipboard(item.text)}
+                      >
+                        {isHexColor && (
+                          <i className="history-color-swatch" style={{ backgroundColor: trimmed }} aria-hidden="true" />
+                        )}
+                        <span>{item.text}</span>
+                        {item.timestamp > 0 && (
+                          <small>{new Date(item.timestamp).toLocaleTimeString(language === 'id' ? 'id-ID' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</small>
+                        )}
+                      </button>
+                      <div className="history-row-actions">
+                        {isUrl && (
+                          <button
+                            type="button"
+                            className="history-action-btn"
+                            title={localize(language, 'Buka tautan', 'Open link')}
+                            aria-label={localize(language, 'Buka tautan', 'Open link')}
+                            onClick={() => { void openUrl(trimmed).catch(() => {}); }}
+                          >
+                            <ExternalLink size={11} />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className={`history-action-btn${item.pinned ? ' is-active' : ''}`}
+                          title={item.pinned ? localize(language, 'Lepas pin', 'Unpin') : localize(language, 'Sematkan', 'Pin')}
+                          aria-label={item.pinned ? localize(language, 'Lepas pin', 'Unpin') : localize(language, 'Sematkan', 'Pin')}
+                          onClick={() => togglePinClip(item.text)}
+                        >
+                          <Pin size={11} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
         {tab === 'shelf' && (
           <div className="tool-card">
             <div className="shelf-drop">{localize(language, 'Lepaskan file di sini untuk menyimpannya sementara.', 'Drop files here to keep them temporarily.')}</div>

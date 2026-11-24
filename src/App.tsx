@@ -7,9 +7,9 @@ import { AnimatePresence, domMax, LazyMotion, m, type Transition } from 'framer-
 import { AlarmClock, Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, LayoutGrid, Mic, Music2, Wifi } from 'lucide-react';
 import ToolsPanel, { type ClipboardItem, type FocusLiveState } from './components/ToolsPanel';
 import { localize, readAppLanguage, type AppLanguage } from './lib/i18n';
-import { readAppSetting, saveAppSetting } from './lib/storage';
-import { readWindhawkSettings, saveWindhawkSettings, type ClickThroughMode } from './lib/appearanceSettings';
-import { readLayoutSettings, saveLayoutSettings, type ToolTabId } from './lib/layoutSettings';
+import { readAppSetting, saveAppSetting, updateCachedAppSetting } from './lib/storage';
+import { readWindhawkSettings, saveWindhawkSettings, WINDHAWK_SETTINGS_KEY, type ClickThroughMode } from './lib/appearanceSettings';
+import { LAYOUT_SETTINGS_KEY, readLayoutSettings, saveLayoutSettings, type ToolTabId } from './lib/layoutSettings';
 import { fetchLyricsCached, getActiveLyricIndex, parseLrc, type SyncedLine } from './lib/lyrics';
 import { getMediaProvider } from './lib/media';
 import AutoNoticeCard from './components/AutoNoticeCard';
@@ -253,6 +253,38 @@ export default function DynamicIsland() {
     }).catch((error: unknown) => {
       console.error('Gagal memasang listener pengaturan system tray:', error);
     });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void listen<{ key: string; value: unknown }>('app-setting-changed', (event) => {
+      if (!active) return;
+      const { key, value } = event.payload;
+      updateCachedAppSetting(key, value);
+      if (key === WINDHAWK_SETTINGS_KEY) {
+        setWindhawkSettings(readWindhawkSettings());
+      } else if (key === LAYOUT_SETTINGS_KEY) {
+        setLayoutSettings(readLayoutSettings());
+      } else if (key === 'di-island-position') {
+        setIslandPosition(value === 1 || value === 2 ? value : 0);
+      } else if (key === 'di-language' && (value === 'id' || value === 'en')) {
+        setLanguage(value);
+      } else if (key === 'di-activity-modules') {
+        setActivityModuleSettings(readActivityModuleSettings());
+      } else if (key === 'di-windows-notification-notices') {
+        setWindowsNotificationNotices(Boolean(value));
+      } else if (key === 'di-notification-app-filters') {
+        setNotificationAppFilters(readNotificationAppFilters());
+      }
+    }).then((stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    }).catch(() => {});
     return () => {
       active = false;
       unlisten?.();
@@ -860,8 +892,8 @@ export default function DynamicIsland() {
       borderRadius: 16,
     },
     systemMonitor: {
-      width: isSidePosition ? Math.min(238, sideWidth) : Math.min(332, topPanelWidth),
-      height: isSidePosition ? Math.min(296, sideHeight) : 232,
+      width: isSidePosition ? Math.min(238, sideWidth) : Math.min(336, topPanelWidth),
+      height: isSidePosition ? Math.min(340, sideHeight) : 272,
       borderRadius: 16,
     },
     tools: {
@@ -1502,6 +1534,9 @@ export default function DynamicIsland() {
                 activeWifiName={sysData.activeWifiName}
                 netRxBytesPerSec={sysData.netRxBytesPerSec ?? null}
                 netTxBytesPerSec={sysData.netTxBytesPerSec ?? null}
+                volume={sysData.volume}
+                outputMuted={sysData.outputMuted}
+                microphoneMuted={sysData.microphoneMuted}
                 travelX={sideTravel}
                 travelY={verticalTravel}
                 transition={panelTransition}

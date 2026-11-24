@@ -75,6 +75,15 @@ export function readAppSetting<T>(key: string, fallback: T): T {
   return settings.has(key) ? settings.get(key) as T : fallback;
 }
 
+export function updateCachedAppSetting(key: string, value: unknown): void {
+  settings.set(key, value);
+  try {
+    serializedCache.set(key, JSON.stringify(value));
+  } catch {
+    // ignore non-serializable values
+  }
+}
+
 export function saveAppSetting(key: string, value: unknown): void {
   if (!initialized) {
     throw new Error('Pengaturan aplikasi belum selesai dimuat.');
@@ -98,6 +107,6 @@ export function saveAppSetting(key: string, value: unknown): void {
   const timer = setTimeout(() => {
     pendingWrites.delete(key);
     enqueuePersist(key, value);
-  }, 300);
+  }, 120);
   pendingWrites.set(key, { value, timer });
 }

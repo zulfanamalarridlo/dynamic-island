@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
-import { Activity, Battery, BatteryCharging, Cpu, HardDrive, Pin, Wifi, X } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { Activity, Battery, BatteryCharging, Cpu, HardDrive, Mic, MicOff, Pin, Volume2, VolumeX, Wifi, X } from 'lucide-react';
 import { m, type Transition } from 'framer-motion';
 import { localize, type AppLanguage } from '../lib/i18n';
 
@@ -18,6 +19,9 @@ interface SystemMonitorDetailProps {
   activeWifiName: string;
   netRxBytesPerSec: number | null;
   netTxBytesPerSec: number | null;
+  volume: number;
+  outputMuted: boolean;
+  microphoneMuted: boolean;
   travelX: number;
   travelY: number;
   transition: Transition;
@@ -73,8 +77,36 @@ function formatNetSpeed(bytesPerSec: number | null): string {
 export default function SystemMonitorDetail({
   language, cpuUsage, memoryUsedBytes, memoryTotalBytes, batteryAvailable, batteryLevel,
   batteryColor, batteryCharging, pinned, onTogglePin, isWifiConnected, activeWifiName,
-  netRxBytesPerSec, netTxBytesPerSec, travelX, travelY, transition, onClose
+  netRxBytesPerSec, netTxBytesPerSec, volume, outputMuted, microphoneMuted, travelX, travelY, transition, onClose
 }: SystemMonitorDetailProps) {
+  const [localVolume, setLocalVolume] = useState(() => Math.round(Number.isFinite(volume) ? volume : 50));
+  const [localOutMuted, setLocalOutMuted] = useState(outputMuted);
+  const [localMicMuted, setLocalMicMuted] = useState(microphoneMuted);
+
+  useEffect(() => {
+    if (Number.isFinite(volume)) setLocalVolume(Math.round(volume));
+  }, [volume]);
+  useEffect(() => setLocalOutMuted(outputMuted), [outputMuted]);
+  useEffect(() => setLocalMicMuted(microphoneMuted), [microphoneMuted]);
+
+  const handleVolumeChange = (next: number) => {
+    setLocalVolume(next);
+    void invoke('set_system_volume', { volume: next }).catch(() => {});
+  };
+
+  const handleToggleSpeaker = () => {
+    setLocalOutMuted((current) => !current);
+    void invoke<boolean>('toggle_output_mute')
+      .then((muted) => setLocalOutMuted(muted))
+      .catch(() => {});
+  };
+
+  const handleToggleMic = () => {
+    setLocalMicMuted((current) => !current);
+    void invoke<boolean>('toggle_microphone_mute')
+      .then((muted) => setLocalMicMuted(muted))
+      .catch(() => {});
+  };
   const memoryPercentage = memoryUsedBytes !== null && memoryTotalBytes !== null && memoryTotalBytes > 0
     ? Math.min(100, Math.max(0, memoryUsedBytes / memoryTotalBytes * 100))
     : 0;
@@ -171,6 +203,37 @@ export default function SystemMonitorDetail({
           percentage={isWifiConnected ? 100 : 0}
           color={networkColor}
         />
+      </div>
+      <div className="system-monitor__audio" aria-label={localize(language, 'Kontrol audio cepat', 'Quick audio controls')}>
+        <button
+          type="button"
+          className={`system-monitor__audio-btn${localOutMuted ? ' is-muted' : ''}`}
+          onClick={handleToggleSpeaker}
+          title={localOutMuted ? localize(language, 'Aktifkan speaker', 'Unmute speaker') : localize(language, 'Bisukan speaker', 'Mute speaker')}
+          aria-label={localOutMuted ? localize(language, 'Aktifkan speaker', 'Unmute speaker') : localize(language, 'Bisukan speaker', 'Mute speaker')}
+        >
+          {localOutMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          className="system-monitor__volume-slider"
+          value={localVolume}
+          onChange={(event) => handleVolumeChange(Number(event.target.value))}
+          aria-label="Volume"
+        />
+        <span className="system-monitor__volume-val">{localVolume}%</span>
+        <button
+          type="button"
+          className={`system-monitor__audio-btn${localMicMuted ? ' is-muted' : ''}`}
+          onClick={handleToggleMic}
+          title={localMicMuted ? localize(language, 'Aktifkan mikrofon', 'Unmute microphone') : localize(language, 'Bisukan mikrofon', 'Mute microphone')}
+          aria-label={localMicMuted ? localize(language, 'Aktifkan mikrofon', 'Unmute microphone') : localize(language, 'Bisukan mikrofon', 'Mute microphone')}
+        >
+          {localMicMuted ? <MicOff size={13} /> : <Mic size={13} />}
+        </button>
       </div>
       <footer className="system-monitor__footer">
         {localize(language, 'Diperbarui setiap detik', 'Updates every second')}

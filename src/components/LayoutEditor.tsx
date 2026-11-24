@@ -62,6 +62,7 @@ export default function LayoutEditor({ language, layout, onChange }: LayoutEdito
   const tabLabels: Record<ToolTabId, string> = {
     focus: 'Focus',
     tasks: 'To-do',
+    notes: localize(language, 'Catatan', 'Notes'),
     ai: 'AI Chat',
     clipboard: 'Clipboard',
     shelf: 'File Shelf',
