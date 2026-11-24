@@ -219,70 +219,75 @@ export default function SettingsWindow() {
     }
   };
 
-  const navItems: { id: SettingsSection; label: string; icon: React.ReactNode }[] = [
-    { id: 'general', label: localize(language, 'Umum', 'General'), icon: <Settings size={15} /> },
-    { id: 'theme', label: localize(language, 'Tema & Ukuran', 'Theme & Size'), icon: <Palette size={15} /> },
-    { id: 'layout', label: localize(language, 'Tata Letak', 'Layout Builder'), icon: <LayoutTemplate size={15} /> },
-    { id: 'profiles', label: localize(language, 'Profil & Backup', 'Profiles'), icon: <Save size={15} /> },
-    { id: 'pet', label: localize(language, 'Karakter Pet', 'Island Pet'), icon: <Smile size={15} /> },
-    { id: 'activity', label: localize(language, 'Aktivitas & Notif', 'Activity & Notif'), icon: <Activity size={15} /> },
-    { id: 'clickup', label: 'ClickUp', icon: <KeyRound size={15} /> }
+  const navItems: { id: SettingsSection; label: string; color: string; icon: React.ReactNode }[] = [
+    { id: 'general', label: localize(language, 'Umum', 'General'), color: '#8e8e93', icon: <Settings size={14} /> },
+    { id: 'theme', label: localize(language, 'Tampilan & Tema', 'Display & Theme'), color: '#0a84ff', icon: <Palette size={14} /> },
+    { id: 'layout', label: localize(language, 'Tata Letak', 'Layout Builder'), color: '#bf5af2', icon: <LayoutTemplate size={14} /> },
+    { id: 'profiles', label: localize(language, 'Profil & Backup', 'Profiles'), color: '#30d158', icon: <Save size={14} /> },
+    { id: 'pet', label: localize(language, 'Karakter Pet', 'Island Pet'), color: '#ff9f0a', icon: <Smile size={14} /> },
+    { id: 'activity', label: localize(language, 'Notifikasi & Aktivitas', 'Notifications'), color: '#ff453a', icon: <Activity size={14} /> },
+    { id: 'clickup', label: 'ClickUp', color: '#5e5ce6', icon: <KeyRound size={14} /> }
   ];
 
   return (
-    <div className="settings-window">
-      <aside className="settings-window__sidebar">
-        <div className="settings-window__brand">
-          <strong>Dynamic Island</strong>
-          <span>{localize(language, 'Pengaturan', 'Settings')}</span>
+    <div className="ios-settings">
+      <aside className="ios-settings__sidebar">
+        <div className="ios-settings__sidebar-title">
+          <h1>{localize(language, 'Pengaturan', 'Settings')}</h1>
+          <small>Dynamic Island</small>
         </div>
-        <nav className="settings-window__nav">
+        <nav className="ios-settings__nav">
           {navItems.map((item) => (
             <button
               key={item.id}
               type="button"
-              className={`settings-window__nav-item${section === item.id ? ' is-active' : ''}`}
+              className={`ios-settings__nav-item${section === item.id ? ' is-active' : ''}`}
               onClick={() => setSection(item.id)}
             >
-              {item.icon}
+              <span className="ios-squircle" style={{ backgroundColor: item.color }} aria-hidden="true">
+                {item.icon}
+              </span>
               <span>{item.label}</span>
             </button>
           ))}
         </nav>
-        <div className="settings-window__sync-badge">
+        <div className="ios-settings__sync">
           <CheckCircle2 size={13} />
-          <span>{statusBanner || localize(language, 'Sinkron langsung aktif', 'Live sync active')}</span>
+          <span>{statusBanner || localize(language, 'Sinkron langsung', 'Live synced')}</span>
         </div>
       </aside>
 
-      <main className="settings-window__content">
+      <main className="ios-settings__content">
         {section === 'general' && (
-          <div className="settings-window__page">
-            <h2>{localize(language, 'Pengaturan Umum', 'General Settings')}</h2>
-            <div className="settings-window__grid">
-              <div className="settings-window__card">
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Bahasa', 'Language')}</span>
-                  <select value={language} onChange={(e) => updateLanguage(e.target.value as AppLanguage)}>
+          <div className="ios-page">
+            <h2 className="ios-page__title">{localize(language, 'Umum', 'General')}</h2>
+
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'TAMPILAN & POSISI', 'DISPLAY & POSITION')}</h3>
+              <div className="ios-card">
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Bahasa', 'Language')}</span>
+                  <select className="ios-select" value={language} onChange={(e) => updateLanguage(e.target.value as AppLanguage)}>
                     <option value="id">Indonesia</option>
                     <option value="en">English</option>
                   </select>
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Posisi Island', 'Island position')}</span>
-                  <select value={islandPosition} onChange={(e) => updatePosition(Number(e.target.value) as IslandPosition)}>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Posisi Island', 'Island Position')}</span>
+                  <select className="ios-select" value={islandPosition} onChange={(e) => updatePosition(Number(e.target.value) as IslandPosition)}>
                     <option value={0}>{localize(language, 'Atas Tengah', 'Top Center')}</option>
                     <option value={1}>{localize(language, 'Kiri Tengah', 'Left Center')}</option>
                     <option value={2}>{localize(language, 'Kanan Tengah', 'Right Center')}</option>
                   </select>
                 </label>
-                <label className="settings-language-field">
-                  <span>Monitor</span>
+                <label className="ios-row">
+                  <span className="ios-row__label">Monitor</span>
                   <select
+                    className="ios-select"
                     value={settings.appearance.monitorIndex}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, monitorIndex: Number(e.target.value) } })}
                   >
-                    <option value={-1}>{localize(language, 'Monitor utama (otomatis)', 'Primary monitor (auto)')}</option>
+                    <option value={-1}>{localize(language, 'Utama (otomatis)', 'Primary (auto)')}</option>
                     {monitors.map((m) => (
                       <option key={m.index} value={m.index}>
                         {m.name} ({m.width}×{m.height}){m.isPrimary ? ' ★' : ''}
@@ -290,9 +295,10 @@ export default function SettingsWindow() {
                     ))}
                   </select>
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Gaya & bentuk', 'Shape & style')}</span>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Gaya & Bentuk', 'Shape & Style')}</span>
                   <select
+                    className="ios-select"
                     value={settings.appearance.shapeStyle}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, shapeStyle: e.target.value as IslandShapeStyle } })}
                   >
@@ -304,61 +310,82 @@ export default function SettingsWindow() {
                     <option value="cyber">Cyber Chamfer</option>
                   </select>
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Mode tampilan Idle', 'Idle display mode')}</span>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Mode Idle', 'Idle Mode')}</span>
                   <select
+                    className="ios-select"
                     value={settings.appearance.idleStyle}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, idleStyle: e.target.value as IdleDisplayStyle } })}
                   >
                     <option value="standard">{localize(language, 'Standar', 'Standard')}</option>
-                    <option value="stealth">{localize(language, 'Stealth (mekar saat hover)', 'Stealth (expand on hover)')}</option>
-                    <option value="prayer">{localize(language, 'Countdown salat', 'Prayer countdown')}</option>
-                    <option value="dual">{localize(language, 'Dual-Pill Split', 'Dual-Pill Split')}</option>
-                    <option value="hud">{localize(language, 'HUD Developer / Gamer', 'Developer / Gamer HUD')}</option>
-                    <option value="vinyl">{localize(language, 'Vinyl Spin', 'Vinyl Spin')}</option>
-                    <option value="ticker">{localize(language, 'Smart Status Ticker', 'Smart Status Ticker')}</option>
+                    <option value="stealth">{localize(language, 'Stealth (Hover)', 'Stealth (Hover)')}</option>
+                    <option value="prayer">{localize(language, 'Countdown Salat', 'Prayer Countdown')}</option>
+                    <option value="dual">Dual-Pill Split</option>
+                    <option value="hud">HUD Developer</option>
+                    <option value="vinyl">Vinyl Spin</option>
+                    <option value="ticker">Smart Ticker</option>
                   </select>
                 </label>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Jarak Tepi Layar', 'Edge Offset')}</span>
+                  <div className="ios-slider-wrap">
+                    <input
+                      className="ios-slider"
+                      type="range"
+                      min={0}
+                      max={48}
+                      value={settings.appearance.edgeOffset}
+                      onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, edgeOffset: Number(e.target.value) } })}
+                    />
+                    <span className="ios-value">{settings.appearance.edgeOffset}px</span>
+                  </div>
+                </label>
               </div>
+            </section>
 
-              <div className="settings-window__card">
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Tembus klik', 'Click-through')}</span>
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'INTERAKSI & STARTUP', 'INTERACTION & STARTUP')}</h3>
+              <div className="ios-card">
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Tembus Klik', 'Click-Through')}</span>
                   <select
+                    className="ios-select"
                     value={settings.appearance.clickThroughMode}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, clickThroughMode: e.target.value as ClickThroughMode } })}
                   >
-                    <option value="off">{localize(language, 'Mati (normal)', 'Off (normal)')}</option>
-                    <option value="hold-alt-pass">{localize(language, 'Tahan Alt → tembus', 'Hold Alt → pass through')}</option>
-                    <option value="hold-alt-interact">{localize(language, 'Tembus saat idle (tahan Alt klik)', 'Pass idle (hold Alt to click)')}</option>
-                    <option value="always">{localize(language, 'Selalu tembus klik', 'Always click-through')}</option>
+                    <option value="off">{localize(language, 'Mati (Normal)', 'Off (Normal)')}</option>
+                    <option value="hold-alt-pass">{localize(language, 'Tahan Alt → Tembus', 'Hold Alt → Pass')}</option>
+                    <option value="hold-alt-interact">{localize(language, 'Idle Tembus (Alt Klik)', 'Idle Pass (Alt Click)')}</option>
+                    <option value="always">{localize(language, 'Selalu Tembus', 'Always Pass')}</option>
                   </select>
                 </label>
-                <div className="settings-shortcut-hints">
-                  <span><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd> {localize(language, 'Toggle tembus klik', 'Toggle click-through')}</span>
-                  <span><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> {localize(language, 'Sembunyikan / tampilkan', 'Hide / show panel')}</span>
-                </div>
-                <label className="settings-inline-row">
-                  <span>{localize(language, 'Scroll volume & kecerahan', 'Scroll volume & brightness')}</span>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Scroll Volume & Kecerahan', 'Scroll Volume & Brightness')}</span>
                   <input
+                    className="ios-switch"
                     type="checkbox"
                     role="switch"
                     checked={settings.appearance.scrollControlEnabled}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, scrollControlEnabled: e.target.checked } })}
                   />
                 </label>
-                <label className="settings-inline-row">
-                  <span>{localize(language, 'Auto-sembunyi saat fullscreen', 'Auto-hide in fullscreen')}</span>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Sembunyi saat Fullscreen', 'Auto-Hide Fullscreen')}</span>
                   <input
+                    className="ios-switch"
                     type="checkbox"
                     role="switch"
                     checked={settings.appearance.autoHideFullscreen}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, autoHideFullscreen: e.target.checked } })}
                   />
                 </label>
-                <label className="settings-inline-row">
-                  <span>{localize(language, 'Auto-startup Windows', 'Windows auto-startup')}</span>
+                <label className="ios-row">
+                  <span className="ios-row__copy">
+                    <span className="ios-row__label">{localize(language, 'Auto-Startup Windows', 'Windows Auto-Startup')}</span>
+                    {startupConfig.isDebugBuild && <small className="ios-row__sub">{localize(language, 'Hanya aktif pada build rilis', 'Release builds only')}</small>}
+                  </span>
                   <input
+                    className="ios-switch"
                     type="checkbox"
                     role="switch"
                     disabled={startupBusy || (startupConfig.isDebugBuild && !startupConfig.enabled)}
@@ -368,18 +395,20 @@ export default function SettingsWindow() {
                 </label>
                 {startupConfig.enabled && (
                   <>
-                    <label className="settings-inline-row">
-                      <span>{localize(language, 'Mulai tersembunyi di Tray', 'Start hidden in Tray')}</span>
+                    <label className="ios-row">
+                      <span className="ios-row__label">{localize(language, 'Mulai Tersembunyi di Tray', 'Start Hidden in Tray')}</span>
                       <input
+                        className="ios-switch"
                         type="checkbox"
                         role="switch"
                         checked={startupConfig.startHidden}
                         onChange={(e) => { void updateStartup({ enabled: true, startHidden: e.target.checked, delaySeconds: startupConfig.delaySeconds }); }}
                       />
                     </label>
-                    <label className="settings-language-field">
-                      <span>{localize(language, 'Delay startup', 'Startup delay')}</span>
+                    <label className="ios-row">
+                      <span className="ios-row__label">{localize(language, 'Delay Startup', 'Startup Delay')}</span>
                       <select
+                        className="ios-select"
                         value={startupConfig.delaySeconds}
                         onChange={(e) => { void updateStartup({ enabled: true, startHidden: startupConfig.startHidden, delaySeconds: Number(e.target.value) }); }}
                       >
@@ -391,13 +420,20 @@ export default function SettingsWindow() {
                     </label>
                   </>
                 )}
-                {startupStatus && <p className="tool-status">{startupStatus}</p>}
               </div>
+              <p className="ios-group__footnote">
+                {localize(language, 'Pintasan global: Ctrl+Alt+G (Tembus klik) · Ctrl+Alt+Space (Sembunyikan/Tampilkan).', 'Global shortcuts: Ctrl+Alt+G (Click-through) · Ctrl+Alt+Space (Hide/Show).')}
+                {startupStatus ? ` ${startupStatus}` : ''}
+              </p>
+            </section>
 
-              <div className="settings-window__card">
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Format jam', 'Clock format')}</span>
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'JAM & ANIMASI', 'CLOCK & ANIMATION')}</h3>
+              <div className="ios-card">
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Format Jam', 'Clock Format')}</span>
                   <select
+                    className="ios-select"
                     value={settings.appearance.clockFormat}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, clockFormat: e.target.value as ClockFormat } })}
                   >
@@ -405,18 +441,20 @@ export default function SettingsWindow() {
                     <option value="12h">12h (AM/PM)</option>
                   </select>
                 </label>
-                <label className="settings-inline-row">
-                  <span>{localize(language, 'Tampilkan detik', 'Show seconds')}</span>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Tampilkan Detik', 'Show Seconds')}</span>
                   <input
+                    className="ios-switch"
                     type="checkbox"
                     role="switch"
                     checked={settings.appearance.showSeconds}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, showSeconds: e.target.checked } })}
                   />
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Format tanggal', 'Date format')}</span>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Format Tanggal', 'Date Format')}</span>
                   <select
+                    className="ios-select"
                     value={settings.appearance.dateFormat}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, dateFormat: e.target.value as DateFormatStyle } })}
                   >
@@ -425,9 +463,10 @@ export default function SettingsWindow() {
                     <option value="full">{localize(language, 'Lengkap', 'Full')}</option>
                   </select>
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Kecepatan animasi', 'Animation speed')}</span>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Kecepatan Animasi', 'Animation Speed')}</span>
                   <select
+                    className="ios-select"
                     value={settings.appearance.animationSpeed}
                     onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, animationSpeed: e.target.value as AnimationSpeed } })}
                   >
@@ -437,266 +476,265 @@ export default function SettingsWindow() {
                     <option value="off">{localize(language, 'Mati', 'Off')}</option>
                   </select>
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Jarak tepi layar', 'Edge offset')} ({settings.appearance.edgeOffset}px)</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={48}
-                    value={settings.appearance.edgeOffset}
-                    onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, edgeOffset: Number(e.target.value) } })}
-                  />
-                </label>
               </div>
-            </div>
+            </section>
           </div>
         )}
 
         {section === 'theme' && (
-          <div className="settings-window__page">
-            <h2>{localize(language, 'Tema & Ukuran', 'Theme & Size')}</h2>
-            <div className="settings-window__card">
-              <div className="settings-theme-grid">
-                {WINDHAWK_THEMES.map(([id, label, swatch]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`settings-theme-chip${settings.themes.themePreset === id ? ' is-active' : ''}`}
-                    onClick={() => updateSettings({ ...settings, themes: { ...settings.themes, themePreset: id } })}
-                  >
-                    <i className="settings-theme-chip__swatch" style={{ backgroundColor: id === 'custom' ? settings.themes.pillBgColor : swatch }} />
-                    <span>{label}</span>
-                  </button>
-                ))}
-              </div>
-              {settings.themes.themePreset === 'custom' && (
-                <div className="settings-window__color-row">
-                  <label>BG <input type="color" value={settings.themes.pillBgColor} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, pillBgColor: e.target.value } })} /></label>
-                  <label>Border <input type="color" value={settings.themes.contourBorderHex} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, contourBorderHex: e.target.value } })} /></label>
-                  <label>Text <input type="color" value={settings.themes.textPrimaryColor} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, textPrimaryColor: e.target.value } })} /></label>
+          <div className="ios-page">
+            <h2 className="ios-page__title">{localize(language, 'Tampilan & Tema', 'Display & Theme')}</h2>
+
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'PRESET WARNA', 'COLOR PRESETS')}</h3>
+              <div className="ios-card ios-card--padded">
+                <div className="ios-theme-grid">
+                  {WINDHAWK_THEMES.map(([id, label, swatch]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`ios-theme-chip${settings.themes.themePreset === id ? ' is-active' : ''}`}
+                      onClick={() => updateSettings({ ...settings, themes: { ...settings.themes, themePreset: id } })}
+                    >
+                      <i className="ios-theme-chip__dot" style={{ backgroundColor: id === 'custom' ? settings.themes.pillBgColor : swatch }} />
+                      <span>{label}</span>
+                    </button>
+                  ))}
                 </div>
-              )}
-            </div>
-            <div className="settings-window__grid">
-              <div className="settings-window__card">
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Opasitas', 'Opacity')} ({settings.themes.pillOpacity}%)</span>
-                  <input type="range" min={35} max={100} value={settings.themes.pillOpacity} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, pillOpacity: Number(e.target.value) } })} />
+                {settings.themes.themePreset === 'custom' && (
+                  <div className="ios-color-pickers">
+                    <label>BG <input type="color" value={settings.themes.pillBgColor} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, pillBgColor: e.target.value } })} /></label>
+                    <label>Border <input type="color" value={settings.themes.contourBorderHex} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, contourBorderHex: e.target.value } })} /></label>
+                    <label>Text <input type="color" value={settings.themes.textPrimaryColor} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, textPrimaryColor: e.target.value } })} /></label>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'UKURAN & OPASITAS', 'SIZE & OPACITY')}</h3>
+              <div className="ios-card">
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Opasitas', 'Opacity')}</span>
+                  <div className="ios-slider-wrap">
+                    <input className="ios-slider" type="range" min={35} max={100} value={settings.themes.pillOpacity} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, pillOpacity: Number(e.target.value) } })} />
+                    <span className="ios-value">{settings.themes.pillOpacity}%</span>
+                  </div>
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Skala teks', 'Text scale')} ({settings.themes.textScale}%)</span>
-                  <input type="range" min={80} max={130} step={5} value={settings.themes.textScale} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, textScale: Number(e.target.value) } })} />
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Skala Teks', 'Text Scale')}</span>
+                  <div className="ios-slider-wrap">
+                    <input className="ios-slider" type="range" min={80} max={130} step={5} value={settings.themes.textScale} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, textScale: Number(e.target.value) } })} />
+                    <span className="ios-value">{settings.themes.textScale}%</span>
+                  </div>
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Lebar panel Tools', 'Tools width')} ({settings.appearance.panelWidth}px)</span>
-                  <input type="range" min={260} max={560} step={8} value={settings.appearance.panelWidth} onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, panelWidth: Number(e.target.value) } })} />
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Lebar Panel Tools', 'Tools Width')}</span>
+                  <div className="ios-slider-wrap">
+                    <input className="ios-slider" type="range" min={260} max={560} step={8} value={settings.appearance.panelWidth} onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, panelWidth: Number(e.target.value) } })} />
+                    <span className="ios-value">{settings.appearance.panelWidth}px</span>
+                  </div>
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Tinggi panel Tools', 'Tools height')} ({settings.appearance.panelHeight}px)</span>
-                  <input type="range" min={220} max={520} step={8} value={settings.appearance.panelHeight} onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, panelHeight: Number(e.target.value) } })} />
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Tinggi Panel Tools', 'Tools Height')}</span>
+                  <div className="ios-slider-wrap">
+                    <input className="ios-slider" type="range" min={220} max={520} step={8} value={settings.appearance.panelHeight} onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, panelHeight: Number(e.target.value) } })} />
+                    <span className="ios-value">{settings.appearance.panelHeight}px</span>
+                  </div>
                 </label>
               </div>
-              <div className="settings-window__card">
-                <label className="settings-inline-row">
-                  <span>{localize(language, 'Gradien latar', 'Background gradient')}</span>
-                  <input type="checkbox" role="switch" checked={settings.themes.bgGradientEnabled} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, bgGradientEnabled: e.target.checked } })} />
+            </section>
+
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'EFEK VISUAL', 'VISUAL EFFECTS')}</h3>
+              <div className="ios-card">
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Gradien Latar', 'Background Gradient')}</span>
+                  <input className="ios-switch" type="checkbox" role="switch" checked={settings.themes.bgGradientEnabled} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, bgGradientEnabled: e.target.checked } })} />
                 </label>
-                <label className="settings-inline-row">
-                  <span>{localize(language, 'Border glow', 'Border glow')}</span>
-                  <input type="checkbox" role="switch" checked={settings.themes.borderGlowEnabled} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, borderGlowEnabled: e.target.checked } })} />
+                <label className="ios-row">
+                  <span className="ios-row__label">Border Glow</span>
+                  <input className="ios-switch" type="checkbox" role="switch" checked={settings.themes.borderGlowEnabled} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, borderGlowEnabled: e.target.checked } })} />
                 </label>
-                <label className="settings-inline-row">
-                  <span>{localize(language, 'Aura reaktif musik', 'Music-reactive aura')}</span>
-                  <input type="checkbox" role="switch" checked={settings.themes.musicReactiveGlow} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, musicReactiveGlow: e.target.checked } })} />
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Aura Reaktif Musik', 'Music-Reactive Aura')}</span>
+                  <input className="ios-switch" type="checkbox" role="switch" checked={settings.themes.musicReactiveGlow} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, musicReactiveGlow: e.target.checked } })} />
                 </label>
-                <label className="settings-language-field">
-                  <span>{localize(language, 'Warna teks global', 'Global text color')}</span>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Warna Teks Global', 'Global Text Color')}</span>
+                  <div className="ios-inline-end">
                     <input type="color" value={settings.themes.textColorOverride || '#ffffff'} onChange={(e) => updateSettings({ ...settings, themes: { ...settings.themes, textColorOverride: e.target.value } })} />
                     {settings.themes.textColorOverride && (
-                      <button type="button" className="tool-text-button" onClick={() => updateSettings({ ...settings, themes: { ...settings.themes, textColorOverride: '' } })}>
+                      <button type="button" className="ios-link-btn" onClick={() => updateSettings({ ...settings, themes: { ...settings.themes, textColorOverride: '' } })}>
                         <RotateCcw size={12} /> Reset
                       </button>
                     )}
                   </div>
                 </label>
               </div>
-            </div>
+            </section>
           </div>
         )}
 
         {section === 'layout' && (
-          <div className="settings-window__page">
-            <h2>{localize(language, 'Layout Builder', 'Layout Builder')}</h2>
-            <div className="settings-window__card">
+          <div className="ios-page">
+            <h2 className="ios-page__title">{localize(language, 'Tata Letak', 'Layout Builder')}</h2>
+            <div className="ios-card ios-card--padded">
               <LayoutEditor language={language} layout={layout} onChange={updateLayout} />
             </div>
           </div>
         )}
 
         {section === 'profiles' && (
-          <div className="settings-window__page">
-            <h2>{localize(language, 'Profil & Backup JSON', 'Profiles & JSON Backup')}</h2>
-            <div className="settings-window__card">
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  className="settings-window__input"
-                  value={newProfileName}
-                  placeholder={localize(language, 'Nama profil baru…', 'New profile name…')}
-                  onChange={(e) => setNewProfileName(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="tool-primary"
-                  disabled={!newProfileName.trim()}
-                  onClick={() => {
-                    const next: SavedIslandProfile = {
-                      id: `p-${Date.now()}`,
-                      name: newProfileName.trim(),
-                      settings,
-                      layout
-                    };
-                    const updated = [next, ...savedProfiles].slice(0, 12);
-                    setSavedProfiles(updated);
-                    saveProfiles(updated);
-                    setNewProfileName('');
-                    flashStatus(localize(language, 'Profil tersimpan', 'Profile saved'));
-                  }}
-                >
-                  <Plus size={13} /> {localize(language, 'Simpan', 'Save')}
-                </button>
-              </div>
-              <div className="settings-window__list">
+          <div className="ios-page">
+            <h2 className="ios-page__title">{localize(language, 'Profil & Backup', 'Profiles & Backup')}</h2>
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'PROFIL TERSIMPAN', 'SAVED PROFILES')}</h3>
+              <div className="ios-card">
+                <div className="ios-row">
+                  <input
+                    className="ios-input"
+                    value={newProfileName}
+                    placeholder={localize(language, 'Nama profil baru…', 'New profile name…')}
+                    onChange={(e) => setNewProfileName(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="ios-pill-btn"
+                    disabled={!newProfileName.trim()}
+                    onClick={() => {
+                      const next: SavedIslandProfile = { id: `p-${Date.now()}`, name: newProfileName.trim(), settings, layout };
+                      const updated = [next, ...savedProfiles].slice(0, 12);
+                      setSavedProfiles(updated);
+                      saveProfiles(updated);
+                      setNewProfileName('');
+                      flashStatus(localize(language, 'Profil tersimpan', 'Profile saved'));
+                    }}
+                  >
+                    <Plus size={13} /> {localize(language, 'Simpan', 'Save')}
+                  </button>
+                </div>
                 {savedProfiles.map((p) => (
-                  <div key={p.id} className="settings-window__list-row">
-                    <span>{p.name}</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button type="button" className="tool-text-button" onClick={() => { updateSettings(p.settings); updateLayout(p.layout); flashStatus(`Profil "${p.name}" aktif`); }}>
+                  <div key={p.id} className="ios-row">
+                    <span className="ios-row__label">{p.name}</span>
+                    <div className="ios-inline-end">
+                      <button type="button" className="ios-link-btn" onClick={() => { updateSettings(p.settings); updateLayout(p.layout); flashStatus(`Profil "${p.name}" aktif`); }}>
                         {localize(language, 'Terapkan', 'Apply')}
                       </button>
-                      <button type="button" className="history-action-btn" onClick={() => { const updated = savedProfiles.filter((x) => x.id !== p.id); setSavedProfiles(updated); saveProfiles(updated); }}>
+                      <button type="button" className="ios-icon-danger" onClick={() => { const updated = savedProfiles.filter((x) => x.id !== p.id); setSavedProfiles(updated); saveProfiles(updated); }}>
                         <Trash2 size={13} />
                       </button>
                     </div>
                   </div>
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            </section>
+
+            <section className="ios-group">
+              <h3 className="ios-group__label">JSON EXPORT / IMPORT</h3>
+              <div className="ios-card ios-card--padded">
                 <button
                   type="button"
-                  className="tool-text-button"
+                  className="ios-link-btn"
                   onClick={() => {
                     void invoke('write_clipboard_text', { text: serializeConfigBundle(settings, layout) });
                     flashStatus(localize(language, 'JSON disalin ke clipboard', 'JSON copied to clipboard'));
                   }}
                 >
-                  Export JSON (Copy)
+                  {localize(language, 'Salin Konfigurasi JSON', 'Copy Config JSON')}
+                </button>
+                <textarea
+                  className="ios-textarea"
+                  value={importJson}
+                  placeholder={localize(language, 'Tempel JSON konfigurasi di sini…', 'Paste config JSON here…')}
+                  onChange={(e) => setImportJson(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="ios-pill-btn"
+                  disabled={!importJson.trim()}
+                  onClick={() => {
+                    const bundle = parseConfigBundle(importJson);
+                    if (!bundle) {
+                      flashStatus(localize(language, 'Format JSON tidak valid', 'Invalid JSON format'));
+                      return;
+                    }
+                    updateSettings(bundle.settings);
+                    updateLayout(bundle.layout);
+                    setImportJson('');
+                    flashStatus(localize(language, 'Konfigurasi diimpor', 'Config imported'));
+                  }}
+                >
+                  Import JSON
                 </button>
               </div>
-              <textarea
-                className="notes-textarea"
-                style={{ minHeight: 90, marginTop: 8 }}
-                value={importJson}
-                placeholder={localize(language, 'Tempel JSON konfigurasi untuk impor…', 'Paste config JSON to import…')}
-                onChange={(e) => setImportJson(e.target.value)}
-              />
-              <button
-                type="button"
-                className="tool-primary"
-                disabled={!importJson.trim()}
-                onClick={() => {
-                  const bundle = parseConfigBundle(importJson);
-                  if (!bundle) {
-                    flashStatus(localize(language, 'Format JSON tidak valid', 'Invalid JSON format'));
-                    return;
-                  }
-                  updateSettings(bundle.settings);
-                  updateLayout(bundle.layout);
-                  setImportJson('');
-                  flashStatus(localize(language, 'Konfigurasi berhasil diimpor', 'Config imported'));
-                }}
-              >
-                Import JSON
-              </button>
-            </div>
+            </section>
           </div>
         )}
 
         {section === 'pet' && (
-          <div className="settings-window__page">
-            <h2>{localize(language, 'Karakter Pet', 'Island Pet')}</h2>
-            <div className="settings-window__card">
-              <label className="settings-language-field">
-                <span>{localize(language, 'Karakter', 'Character')}</span>
-                <select
-                  value={settings.appearance.petStyle}
-                  onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, petStyle: e.target.value as WindhawkSettings['appearance']['petStyle'] } })}
-                >
-                  <option value="luffy">Luffy (Default)</option>
-                  <option value="custom">{localize(language, 'Gambar Kustom (PNG/GIF)', 'Custom Image (PNG/GIF)')}</option>
-                  <option value="none">{localize(language, 'Sembunyikan', 'Hidden')}</option>
-                </select>
-              </label>
-              {settings.appearance.petStyle === 'custom' && (
-                <label className="tool-text-button" style={{ cursor: 'pointer', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                  <Upload size={13} /> {localize(language, 'Unggah PNG / GIF', 'Upload PNG / GIF')}
-                  <input
-                    type="file"
-                    accept="image/png,image/gif,image/webp"
-                    hidden
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        if (typeof reader.result === 'string') {
-                          updateSettings({ ...settings, appearance: { ...settings.appearance, customPetImage: reader.result } });
-                        }
-                      };
-                      reader.readAsDataURL(file);
-                    }}
-                  />
+          <div className="ios-page">
+            <h2 className="ios-page__title">{localize(language, 'Karakter Pet', 'Island Pet')}</h2>
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'KARAKTER & TIDUR', 'CHARACTER & SLEEP')}</h3>
+              <div className="ios-card">
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Karakter', 'Character')}</span>
+                  <select
+                    className="ios-select"
+                    value={settings.appearance.petStyle}
+                    onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, petStyle: e.target.value as WindhawkSettings['appearance']['petStyle'] } })}
+                  >
+                    <option value="luffy">Luffy (Default)</option>
+                    <option value="custom">{localize(language, 'Gambar Kustom', 'Custom Image')}</option>
+                    <option value="none">{localize(language, 'Sembunyikan', 'Hidden')}</option>
+                  </select>
                 </label>
-              )}
-              <label className="settings-language-field">
-                <span>{localize(language, 'Waktu tidur PC idle', 'PC idle sleep timer')} ({settings.appearance.petIdleMinutes} {localize(language, 'mnt', 'min')})</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={60}
-                  value={settings.appearance.petIdleMinutes}
-                  onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, petIdleMinutes: Number(e.target.value) } })}
-                />
-              </label>
-            </div>
+                {settings.appearance.petStyle === 'custom' && (
+                  <label className="ios-row" style={{ cursor: 'pointer' }}>
+                    <span className="ios-row__label">{localize(language, 'Unggah PNG / GIF', 'Upload PNG / GIF')}</span>
+                    <span className="ios-link-btn"><Upload size={13} /> {localize(language, 'Pilih File', 'Choose File')}</span>
+                    <input
+                      type="file"
+                      accept="image/png,image/gif,image/webp"
+                      hidden
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          if (typeof reader.result === 'string') {
+                            updateSettings({ ...settings, appearance: { ...settings.appearance, customPetImage: reader.result } });
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                )}
+                <label className="ios-row">
+                  <span className="ios-row__label">{localize(language, 'Tidur saat PC Idle', 'Sleep on PC Idle')}</span>
+                  <div className="ios-slider-wrap">
+                    <input className="ios-slider" type="range" min={1} max={60} value={settings.appearance.petIdleMinutes} onChange={(e) => updateSettings({ ...settings, appearance: { ...settings.appearance, petIdleMinutes: Number(e.target.value) } })} />
+                    <span className="ios-value">{settings.appearance.petIdleMinutes}m</span>
+                  </div>
+                </label>
+              </div>
+            </section>
           </div>
         )}
 
         {section === 'activity' && (
-          <div className="settings-window__page">
-            <h2>{localize(language, 'Aktivitas Windows & Notifikasi', 'Windows Activity & Notifications')}</h2>
-            <div className="settings-window__grid">
-              <div className="settings-window__card">
-                {ACTIVITY_LABELS.map((item) => (
-                  <label key={item.id} className="settings-inline-row">
-                    <span>{language === 'id' ? item.idLabel : item.enLabel}</span>
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      checked={activityModules[item.id]}
-                      onChange={(e) => {
-                        const next = { ...activityModules, [item.id]: e.target.checked };
-                        setActivityModules(next);
-                        saveAppSetting('di-activity-modules', next);
-                      }}
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="settings-window__card">
-                <label className="settings-inline-row">
-                  <span><Bell size={13} style={{ display: 'inline', marginRight: 6 }} />{localize(language, 'Notifikasi Windows', 'Windows Notifications')}</span>
+          <div className="ios-page">
+            <h2 className="ios-page__title">{localize(language, 'Notifikasi & Aktivitas', 'Notifications & Activity')}</h2>
+
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'NOTIFIKASI WINDOWS', 'WINDOWS NOTIFICATIONS')}</h3>
+              <div className="ios-card">
+                <label className="ios-row">
+                  <span className="ios-row__label"><Bell size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2 }} />{localize(language, 'Tampilkan Notifikasi', 'Show Notifications')}</span>
                   <input
+                    className="ios-switch"
                     type="checkbox"
                     role="switch"
                     checked={notifEnabled}
@@ -706,16 +744,16 @@ export default function SettingsWindow() {
                     }}
                   />
                 </label>
-                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <div className="ios-row">
                   <input
-                    className="settings-window__input"
+                    className="ios-input"
                     value={newNotifApp}
-                    placeholder={localize(language, 'Nama aplikasi (mis. WhatsApp)…', 'App name (e.g. WhatsApp)…')}
+                    placeholder={localize(language, 'Filter aplikasi (mis. WhatsApp)…', 'Filter app (e.g. WhatsApp)…')}
                     onChange={(e) => setNewNotifApp(e.target.value)}
                   />
                   <button
                     type="button"
-                    className="tool-primary"
+                    className="ios-pill-btn"
                     disabled={!newNotifApp.trim()}
                     onClick={() => {
                       const name = newNotifApp.trim();
@@ -728,54 +766,80 @@ export default function SettingsWindow() {
                     <Plus size={13} />
                   </button>
                 </div>
-                <div className="settings-window__list">
-                  {Object.entries(notifFilters).map(([appName, allowed]) => (
-                    <label key={appName} className="settings-inline-row">
-                      <span>{appName}</span>
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        checked={allowed}
-                        onChange={(e) => {
-                          const next = { ...notifFilters, [appName]: e.target.checked };
-                          setNotifFilters(next);
-                          saveAppSetting('di-notification-app-filters', next);
-                        }}
-                      />
-                    </label>
-                  ))}
-                </div>
+                {Object.entries(notifFilters).map(([appName, allowed]) => (
+                  <label key={appName} className="ios-row">
+                    <span className="ios-row__label">{appName}</span>
+                    <input
+                      className="ios-switch"
+                      type="checkbox"
+                      role="switch"
+                      checked={allowed}
+                      onChange={(e) => {
+                        const next = { ...notifFilters, [appName]: e.target.checked };
+                        setNotifFilters(next);
+                        saveAppSetting('di-notification-app-filters', next);
+                      }}
+                    />
+                  </label>
+                ))}
               </div>
-            </div>
+            </section>
+
+            <section className="ios-group">
+              <h3 className="ios-group__label">{localize(language, 'AKTIVITAS SISTEM', 'SYSTEM ACTIVITY')}</h3>
+              <div className="ios-card">
+                {ACTIVITY_LABELS.map((item) => (
+                  <label key={item.id} className="ios-row">
+                    <span className="ios-row__label">{language === 'id' ? item.idLabel : item.enLabel}</span>
+                    <input
+                      className="ios-switch"
+                      type="checkbox"
+                      role="switch"
+                      checked={activityModules[item.id]}
+                      onChange={(e) => {
+                        const next = { ...activityModules, [item.id]: e.target.checked };
+                        setActivityModules(next);
+                        saveAppSetting('di-activity-modules', next);
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </section>
           </div>
         )}
 
         {section === 'clickup' && (
-          <div className="settings-window__page">
-            <h2>ClickUp</h2>
-            <form className="settings-window__card" onSubmit={(e) => { void handleSaveClickUp(e); }}>
-              <label className="settings-language-field">
-                <span>API Key {clickUpConfig?.api_key_configured ? '(tersimpan)' : ''}</span>
-                <input
-                  type="password"
-                  className="settings-window__input"
-                  value={clickUpApiKey}
-                  placeholder="pk_..."
-                  onChange={(e) => setClickUpApiKey(e.target.value)}
-                />
-              </label>
-              <label className="settings-language-field">
-                <span>List IDs (pisahkan dengan koma)</span>
-                <input
-                  type="text"
-                  className="settings-window__input"
-                  value={clickUpListIds}
-                  placeholder="123456, 789012"
-                  onChange={(e) => setClickUpListIds(e.target.value)}
-                />
-              </label>
-              <button type="submit" className="tool-primary">{localize(language, 'Simpan ClickUp', 'Save ClickUp')}</button>
-              {clickUpStatus && <p className="tool-status">{clickUpStatus}</p>}
+          <div className="ios-page">
+            <h2 className="ios-page__title">ClickUp</h2>
+            <form className="ios-group" onSubmit={(e) => { void handleSaveClickUp(e); }}>
+              <h3 className="ios-group__label">{localize(language, 'KREDENSIAL API', 'API CREDENTIALS')}</h3>
+              <div className="ios-card">
+                <label className="ios-row">
+                  <span className="ios-row__label">API Key {clickUpConfig?.api_key_configured ? '✓' : ''}</span>
+                  <input
+                    type="password"
+                    className="ios-input ios-input--right"
+                    value={clickUpApiKey}
+                    placeholder="pk_..."
+                    onChange={(e) => setClickUpApiKey(e.target.value)}
+                  />
+                </label>
+                <label className="ios-row">
+                  <span className="ios-row__label">List IDs</span>
+                  <input
+                    type="text"
+                    className="ios-input ios-input--right"
+                    value={clickUpListIds}
+                    placeholder="123456, 789012"
+                    onChange={(e) => setClickUpListIds(e.target.value)}
+                  />
+                </label>
+                <div className="ios-row">
+                  <span className="ios-row__sub">{clickUpStatus || localize(language, 'Pisahkan beberapa List ID dengan koma', 'Separate multiple List IDs with commas')}</span>
+                  <button type="submit" className="ios-pill-btn">{localize(language, 'Simpan', 'Save')}</button>
+                </div>
+              </div>
             </form>
           </div>
         )}
@@ -783,4 +847,3 @@ export default function SettingsWindow() {
     </div>
   );
 }
-
