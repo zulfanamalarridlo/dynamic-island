@@ -3,17 +3,19 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { availableMonitors, currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
-import { AnimatePresence, domAnimation, LazyMotion, m } from 'framer-motion';
+import { AnimatePresence, domMax, LazyMotion, m, type Transition } from 'framer-motion';
 import { AlarmClock, Battery, BatteryCharging, Bluetooth, Camera, Cpu, Download, HardDrive, LayoutGrid, Mic, Music2, Wifi } from 'lucide-react';
 import ToolsPanel, { type ClipboardItem, type FocusLiveState } from './components/ToolsPanel';
 import { localize, readAppLanguage, type AppLanguage } from './lib/i18n';
 import { readAppSetting, saveAppSetting } from './lib/storage';
 import { readWindhawkSettings, saveWindhawkSettings, type ClickThroughMode } from './lib/appearanceSettings';
 import { readLayoutSettings, saveLayoutSettings, type ToolTabId } from './lib/layoutSettings';
+import { fetchLyricsCached, getActiveLyricIndex, parseLrc, type SyncedLine } from './lib/lyrics';
 import { getMediaProvider } from './lib/media';
 import AutoNoticeCard from './components/AutoNoticeCard';
 import IslandPet from './components/IslandPet';
 import Launcher from './components/Launcher';
+import SlideDigits from './components/SlideDigits';
 import { ACTIVITY_MODULE_DEFAULTS, type ActivityModule, type ActivityModuleSettings, type AutoNotice, type BatteryInfo, type SysData } from './types';
 import './App.css';
 
@@ -149,7 +151,7 @@ export default function DynamicIsland() {
   const [autoNotice, setAutoNotice] = useState<AutoNotice | null>(null);
   const [clipboardItems, setClipboardItems] = useState<ClipboardItem[]>(() => readLocalItems<ClipboardItem>('di-clipboard-history'));
   const [shelfPaths, setShelfPaths] = useState<string[]>(() => readLocalItems<string>('di-file-shelf'));
-  const [showLyrics, setShowLyrics] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(() => readLocalBoolean('di-show-lyrics', false));
   const [mediaArtwork, setMediaArtwork] = useState<string | null>(null);
   const [mediaPinned, setMediaPinned] = useState(() => readLocalBoolean('di-pin-media', false));
   const [monitorPinned, setMonitorPinned] = useState(() => (
@@ -168,6 +170,8 @@ export default function DynamicIsland() {
   const notificationAppFiltersRef = useRef(notificationAppFilters);
   const noticeDurationMsRef = useRef(4000);
   const [clickThroughActive, setClickThroughActive] = useState(false);
+  const [idleSyncedLyrics, setIdleSyncedLyrics] = useState<SyncedLine[]>([]);
+  const [idleMediaPosition, setIdleMediaPosition] = useState(0);
   const lastWheelAtRef = useRef(0);
   const brightnessCacheRef = useRef<number | null>(null);
   const autoNoticeRef = useRef<AutoNotice | null>(null);
@@ -201,6 +205,35 @@ export default function DynamicIsland() {
   }, [sysData.media?.title, sysData.media?.artist, sysData.media?.source_app]);
 
   useEffect(() => {
+    const media = sysData.media;
+    if (!media || !media.title.trim()) {
+      setIdleSyncedLyrics([]);
+      return;
+    }
+    let active = true;
+    void fetchLyricsCached(media.title, media.artist, media.duration_seconds).then((payload) => {
+      if (!active) return;
+      setIdleSyncedLyrics(payload?.syncedLyrics ? parseLrc(payload.syncedLyrics) : []);
+    });
+    return () => {
+      active = false;
+    };
+  }, [sysData.media?.title, sysData.media?.artist, sysData.media?.duration_seconds]);
+
+  useEffect(() => {
+    setIdleMediaPosition(sysData.media?.position_seconds ?? 0);
+  }, [sysData.media?.position_seconds, sysData.media?.title, sysData.media?.artist]);
+
+  useEffect(() => {
+    if (!sysData.media?.is_playing || idleSyncedLyrics.length === 0) return;
+    const duration = sysData.media.duration_seconds;
+    const timer = window.setInterval(() => {
+      setIdleMediaPosition((pos) => (duration > 0 ? Math.min(duration, pos + 0.4) : pos + 0.4));
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [sysData.media?.is_playing, sysData.media?.duration_seconds, idleSyncedLyrics.length]);
+
+  useEffect(() => {
     let active = true;
     let unlisten: (() => void) | null = null;
     void listen('tray-open-settings', () => {
@@ -228,6 +261,7 @@ export default function DynamicIsland() {
   useEffect(() => saveLayoutSettings(layoutSettings), [layoutSettings]);
   useEffect(() => saveAppSetting('di-pin-media', mediaPinned), [mediaPinned]);
   useEffect(() => saveAppSetting('di-pin-monitor', monitorPinned), [monitorPinned]);
+  useEffect(() => saveAppSetting('di-show-lyrics', showLyrics), [showLyrics]);
 
   useEffect(() => {
     const intervalMs = windhawkSettings.appearance.showSeconds ? 1_000 : 15_000;
@@ -454,6 +488,13 @@ export default function DynamicIsland() {
   }, []);
 
   const handleMediaAction = async (action: 'previous' | 'playPause' | 'next') => {
+    if (action === 'playPause') {
+      setSysData((current) => (
+        current.media
+          ? { ...current, media: { ...current.media, is_playing: !current.media.is_playing } }
+          : current
+      ));
+    }
     try {
       await invoke('control_media', { action });
     } catch (error) {
@@ -481,7 +522,6 @@ export default function DynamicIsland() {
 
   const returnToLauncher = () => {
     if (islandModeRef.current === 'idle' || islandModeRef.current === 'autoNotice') return;
-    setShowLyrics(false);
     islandModeRef.current = 'launcher';
     setIslandMode('launcher');
   };
@@ -496,7 +536,6 @@ export default function DynamicIsland() {
     autoNoticeTimer.current = null;
     autoNoticeRef.current = null;
     setAutoNotice(null);
-    setShowLyrics(false);
     islandModeRef.current = 'mediaDetail';
     setIslandMode('mediaDetail');
   };
@@ -575,7 +614,6 @@ export default function DynamicIsland() {
     autoNoticeTimer.current = null;
     autoNoticeQueue.current = [];
     autoNoticeRef.current = null;
-    setShowLyrics(false);
     islandModeRef.current = 'idle';
     setAutoNotice(null);
     setIslandMode('idle');
@@ -709,18 +747,35 @@ export default function DynamicIsland() {
     + (showPetWidget ? 30 : 0)
     + (!showClock && !showDate ? 34 : 0)
     + 18;
+  const activeIdleLyricIndex = sysData.media?.is_playing
+    ? getActiveLyricIndex(idleSyncedLyrics, idleMediaPosition)
+    : -1;
+  const activeIdleLyric = activeIdleLyricIndex >= 0 ? idleSyncedLyrics[activeIdleLyricIndex]?.text ?? '' : '';
+  const idleLyricDisplayText = activeIdleLyric || sysData.media?.title || localize(language, 'Sedang diputar', 'Now playing');
+  const shouldMarqueeIdleLyric = idleLyricDisplayText.length > 24;
+  const showIdleLyricPill = !mediaPinned && showLyrics && Boolean(sysData.media?.is_playing);
+  const showTopIdleLyric = !isSidePosition && showIdleLyricPill;
+  const showSideIdleLyric = isSidePosition && showIdleLyricPill;
+  const idleMediaProgress = sysData.media && sysData.media.duration_seconds > 0
+    ? Math.max(0, Math.min(100, (idleMediaPosition / sysData.media.duration_seconds) * 100))
+    : 0;
+  const topIdleMaxWidth = Math.min(viewport.width - 24, Math.max(topPanelWidth, 548));
+
   const idleWidth = isSidePosition
-    ? Math.min(sideWidth, hasPinnedIdleContent ? 82 : 48)
-    : Math.min(topPanelWidth, (hasPinnedIdleContent
-      ? mediaPinned && monitorPinned ? 388 : mediaPinned ? 276 : 332
-      : Math.max(96, baseIdleWidth)) + privacyExtraWidth + liveExtraWidth);
+    ? Math.min(sideWidth, hasPinnedIdleContent ? 82 : showSideIdleLyric ? 56 : 48)
+    : hasPinnedIdleContent
+      ? Math.min(topIdleMaxWidth, mediaPinned && monitorPinned ? 544 : mediaPinned ? 476 : 348)
+      : showTopIdleLyric
+        ? Math.min(topIdleMaxWidth, 468)
+        : Math.min(topIdleMaxWidth, Math.max(96, baseIdleWidth) + privacyExtraWidth + liveExtraWidth);
   const sideFocusExtraHeight = isSidePosition && focusLive.running ? 34 : 0;
   const idleHeight = isSidePosition
     ? Math.min(
       sideHeight,
-      (monitorPinned ? (mediaPinned ? 296 : 236) : mediaPinned ? 156 : 118) + sideFocusExtraHeight
+      (monitorPinned ? (mediaPinned ? 348 : 236) : mediaPinned ? 232 : showSideIdleLyric ? 248 : 118)
+        + sideFocusExtraHeight
     )
-    : monitorPinned ? 46 : mediaPinned ? 44 : 38;
+    : monitorPinned ? 48 : (mediaPinned || showTopIdleLyric) ? 48 : 38;
 
   const edgeOffset = Number.isFinite(windhawkSettings.appearance.edgeOffset)
     ? Math.min(48, Math.max(0, windhawkSettings.appearance.edgeOffset))
@@ -748,10 +803,10 @@ export default function DynamicIsland() {
       borderRadius: 14,
     },
     mediaDetail: {
-      width: isSidePosition ? Math.min(244, sideWidth) : Math.min(352, topPanelWidth),
+      width: isSidePosition ? Math.min(234, sideWidth) : Math.min(332, topPanelWidth),
       height: isSidePosition
-        ? Math.min(showLyrics ? 348 : 228, sideHeight)
-        : (showLyrics ? 276 : 152),
+        ? Math.min(showLyrics ? 236 : 150, sideHeight)
+        : (showLyrics ? 210 : 128),
       borderRadius: 16,
     },
     systemMonitor: {
@@ -766,14 +821,14 @@ export default function DynamicIsland() {
     }
   };
 
-  const animDuration = windhawkSettings.appearance.animationSpeed === 'off'
-    ? 0.01
-    : windhawkSettings.appearance.animationSpeed === 'snappy'
-      ? 0.16
-      : windhawkSettings.appearance.animationSpeed === 'smooth'
-        ? 0.48
-        : 0.30;
-  const panelTransition = { duration: animDuration, ease: [0.22, 1, 0.36, 1] };
+  const animSpeed = windhawkSettings.appearance.animationSpeed;
+  const panelTransition: Transition = animSpeed === 'off'
+    ? { duration: 0.01 }
+    : animSpeed === 'snappy'
+      ? { type: 'spring', stiffness: 460, damping: 34, mass: 0.75 }
+      : animSpeed === 'smooth'
+        ? { type: 'spring', stiffness: 220, damping: 26, mass: 0.9 }
+        : { type: 'spring', stiffness: 340, damping: 30, mass: 0.8 };
   const sideTravel = islandPosition === 1 ? -7 : islandPosition === 2 ? 7 : 0;
   const verticalTravel = islandPosition === 0 ? -6 : 0;
   const pillOpacity = Number.isFinite(windhawkSettings.themes.pillOpacity)
@@ -931,10 +986,10 @@ export default function DynamicIsland() {
   };
 
   return (
-    <LazyMotion features={domAnimation}>
+    <LazyMotion features={domMax}>
     <div className="w-screen h-screen flex items-start justify-start overflow-hidden box-border select-none">
       <div
-        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''}${hasGradientBg ? ' island-shell--gradient' : ''}${hasBorderGlow ? ' island-shell--glow' : ''}${hasMusicGlow ? ' island-shell--music-glow' : ''}${clickThroughActive ? ' island-shell--click-through' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
+        className={`island-shell${hasTextColorOverride ? ' island-shell--custom-text' : ''}${hasGradientBg ? ' island-shell--gradient' : ''}${hasBorderGlow ? ' island-shell--glow' : ''}${hasMusicGlow ? ' island-shell--music-glow' : ''}${focusLive.running ? ` island-shell--focus-aura${focusLive.isBreak ? ' is-break' : ''}` : ''}${clickThroughActive ? ' island-shell--click-through' : ''}${animSpeed === 'off' ? ' island-anim-off' : ''} border overflow-hidden cursor-pointer flex items-center justify-center relative pointer-events-auto island-position-${islandPosition === 0 ? 'top-center' : islandPosition === 1 ? 'left-center' : 'right-center'} island-shape-${windhawkSettings.appearance.shapeStyle} island-theme-${windhawkSettings.themes.themePreset}`}
         style={{
           ...islandStyle,
           ...('borderRadius' in activeVariant
@@ -1004,11 +1059,11 @@ export default function DynamicIsland() {
                           {isSidePosition
                             ? (
                               <>
-                                <span>{String(time.getHours()).padStart(2, '0')}</span>
-                                <span>{String(time.getMinutes()).padStart(2, '0')}</span>
+                                <SlideDigits value={String(time.getHours()).padStart(2, '0')} />
+                                <SlideDigits value={String(time.getMinutes()).padStart(2, '0')} />
                               </>
                             )
-                            : formattedTime.replace('.', ':')}
+                            : <SlideDigits value={formattedTime.replace('.', ':')} />}
                         </span>
                       )}
                       {showDate && <span className="idle-clock__date">{formattedDate}</span>}
@@ -1085,7 +1140,7 @@ export default function DynamicIsland() {
                       <button
                         key="battery"
                         type="button"
-                        className="idle-battery"
+                        className={`idle-battery${sysData.batteryState === 'Charging' ? ' is-charging' : ''}${batteryAvailable && batteryLevel <= 20 && sysData.batteryState !== 'Charging' ? ' is-low' : ''}`}
                         aria-label={localize(language, 'Buka monitor sistem', 'Open system monitor')}
                         onClick={openSystemMonitor}
                         style={{ '--battery-color': batteryColor, '--battery-level': `${batteryLevel / 100}` } as CSSProperties}
@@ -1122,6 +1177,46 @@ export default function DynamicIsland() {
                       </button>
                     )}
                     {nodes}
+                    {showIdleLyricPill && (
+                      <button
+                        type="button"
+                        className={`idle-lyric-pill${isSidePosition ? ' idle-lyric-pill--side' : ''}${shouldMarqueeIdleLyric ? ' is-marquee' : ''}`}
+                        onClick={openMediaDetail}
+                        title={`${sysData.media?.title ?? ''}${activeIdleLyric ? ` — ${activeIdleLyric}` : ''}`}
+                      >
+                        <span className={`idle-lyric-pill__art${mediaArtwork ? ' has-art' : ''}`} aria-hidden="true">
+                          {mediaArtwork ? <img src={mediaArtwork} alt="" /> : <Music2 size={10} />}
+                        </span>
+                        <span className="idle-lyric-pill__body">
+                          {!isSidePosition && (
+                            <span className="idle-lyric-pill__title">
+                              {sysData.media?.title || localize(language, 'Sedang diputar', 'Now playing')}
+                            </span>
+                          )}
+                          <span className="idle-lyric-pill__viewport">
+                            <span key={idleLyricDisplayText} className="idle-lyric-pill__text">
+                              {activeIdleLyric ? `♪ ${activeIdleLyric}` : idleLyricDisplayText}
+                            </span>
+                          </span>
+                        </span>
+                        <span className={`idle-waveform idle-waveform--corner${sysData.media?.is_playing ? ' is-playing' : ''}`} aria-hidden="true">
+                          {(isSidePosition
+                            ? [40, 76, 54, 96, 68, 100, 50, 84, 60, 42]
+                            : [34, 62, 46, 86, 58, 96, 44, 78, 92, 52, 100, 68, 84, 48, 90, 64, 76, 42, 88, 56, 70, 38]
+                          ).map((barH, idx, arr) => {
+                            const pct = ((idx + 0.5) / arr.length) * 100;
+                            const isPlayed = idleMediaProgress > 0 ? pct <= idleMediaProgress : true;
+                            return (
+                              <i
+                                key={idx}
+                                className={isPlayed ? 'is-played' : undefined}
+                                style={{ height: `${barH}%`, animationDelay: `${(idx % 6) * 0.08}s` }}
+                              />
+                            );
+                          })}
+                        </span>
+                      </button>
+                    )}
                     {focusLive.running && (
                       <button
                         type="button"
@@ -1133,7 +1228,7 @@ export default function DynamicIsland() {
                       >
                         <span className="idle-focus-pill__row">
                           <AlarmClock size={10} />
-                          <strong>{focusFormatted}</strong>
+                          <strong><SlideDigits value={focusFormatted} /></strong>
                         </span>
                         <span className="idle-focus-pill__bar" aria-hidden="true">
                           <span style={{ width: `${focusProgress}%` }} />
@@ -1156,11 +1251,28 @@ export default function DynamicIsland() {
                   </span>
                   <span className="idle-pin-card__copy">
                     <strong>{sysData.media?.title || localize(language, 'Tidak ada media', 'No media')}</strong>
-                    <small>{sysData.media?.artist || localize(language, 'Putar musik', 'Play media')}</small>
+                    <span className={`idle-pin-card__subwrap${showLyrics && activeIdleLyric ? ' has-lyric' : ''}${showLyrics && activeIdleLyric.length > 24 ? ' is-marquee' : ''}`}>
+                      <small key={(showLyrics && activeIdleLyric) || sysData.media?.artist || 'artist'} className={showLyrics && activeIdleLyric ? 'idle-pin-card__lyric' : undefined}>
+                        {showLyrics && activeIdleLyric ? `♪ ${activeIdleLyric}` : (sysData.media?.artist || localize(language, 'Putar musik', 'Play media'))}
+                      </small>
+                    </span>
                   </span>
-                  {sysData.media?.is_playing && (
-                    <span className="idle-pin-card__eq" aria-label={localize(language, 'Sedang diputar', 'Now playing')}>
-                      <i /><i /><i />
+                  {sysData.media && (
+                    <span className={`idle-waveform idle-waveform--corner${sysData.media.is_playing ? ' is-playing' : ''}`} aria-hidden="true">
+                      {(isSidePosition
+                        ? [38, 74, 52, 94, 66, 100, 48, 86, 58, 40]
+                        : [34, 62, 46, 86, 58, 96, 44, 78, 92, 52, 100, 68, 84, 48, 90, 64, 76, 42, 88, 56, 70, 38]
+                      ).map((barH, idx, arr) => {
+                        const pct = ((idx + 0.5) / arr.length) * 100;
+                        const isPlayed = idleMediaProgress > 0 ? pct <= idleMediaProgress : sysData.media?.is_playing;
+                        return (
+                          <i
+                            key={idx}
+                            className={isPlayed ? 'is-played' : undefined}
+                            style={{ height: `${barH}%`, animationDelay: `${(idx % 6) * 0.08}s` }}
+                          />
+                        );
+                      })}
                     </span>
                   )}
                 </button>

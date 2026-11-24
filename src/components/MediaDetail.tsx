@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useState, type MouseEvent } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AnimatePresence, m } from 'framer-motion';
+import { AnimatePresence, m, type Transition } from 'framer-motion';
 import { Mic2, Music2, Pause, Pin, Play, SkipBack, SkipForward, X } from 'lucide-react';
 import { localize, type AppLanguage } from '../lib/i18n';
 import type { MediaInfo, MediaProvider } from '../types';
@@ -16,12 +16,14 @@ interface MediaDetailProps {
   pinned: boolean;
   travelX: number;
   travelY: number;
-  transition: { duration: number; ease: number[] };
+  transition: Transition;
   onToggleLyrics: () => void;
   onTogglePin: () => void;
   onReturnToLauncher: () => void;
   onMediaAction: (action: 'previous' | 'playPause' | 'next') => void;
 }
+
+const WAVEFORM_BARS = 32;
 
 function formatTrackTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -29,6 +31,23 @@ function formatTrackTime(seconds: number): string {
   const mins = Math.floor(total / 60);
   const secs = total % 60;
   return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function buildTrackWaveform(seedText: string): number[] {
+  let hash = 2166136261;
+  for (let i = 0; i < seedText.length; i += 1) {
+    hash ^= seedText.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const bars: number[] = [];
+  for (let i = 0; i < WAVEFORM_BARS; i += 1) {
+    hash = Math.imul(hash ^ (i * 2654435761), 1597334677);
+    const pseudo = ((hash >>> 0) % 100) / 100;
+    const envelope = Math.sin((i / (WAVEFORM_BARS - 1)) * Math.PI);
+    const height = Math.round(26 + (pseudo * 0.65 + envelope * 0.35) * 74);
+    bars.push(Math.max(24, Math.min(100, height)));
+  }
+  return bars;
 }
 
 export default function MediaDetail({
@@ -53,6 +72,11 @@ export default function MediaDetail({
     ? Math.max(0, Math.min(100, (livePosition / media.duration_seconds) * 100))
     : 0;
 
+  const waveformBars = useMemo(
+    () => buildTrackWaveform(`${media.title}|${media.artist}`),
+    [media.title, media.artist]
+  );
+
   const handleSeekTo = (seconds: number) => {
     const clamped = Math.max(0, Math.min(media.duration_seconds || seconds, seconds));
     setLivePosition(clamped);
@@ -61,7 +85,7 @@ export default function MediaDetail({
     });
   };
 
-  const handleProgressClick = (event: MouseEvent<HTMLButtonElement>) => {
+  const handleWaveformClick = (event: MouseEvent<HTMLButtonElement>) => {
     if (media.duration_seconds <= 0) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
@@ -69,11 +93,15 @@ export default function MediaDetail({
   };
 
   const hasTrackTitle = Boolean(media.title.trim());
+  const activeBarIndex = Math.min(
+    WAVEFORM_BARS - 1,
+    Math.floor((progress / 100) * WAVEFORM_BARS)
+  );
 
   return (
     <m.section
       key="media-detail"
-      className={`media-detail${provider ? ` media-detail--${provider}` : ''}${showLyrics ? ' media-detail--with-lyrics' : ''}`}
+      className={`media-detail media-detail--wave${provider ? ` media-detail--${provider}` : ''}${showLyrics ? ' media-detail--with-lyrics' : ''}`}
       initial={{ opacity: 0, x: travelX, y: travelY, scale: 0.99 }}
       animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
       exit={{ opacity: 0, x: travelX, y: travelY, scale: 0.995 }}
@@ -89,14 +117,11 @@ export default function MediaDetail({
       )}
 
       <div className="media-detail__heading">
-        <span className={`media-detail__art${artwork ? ' media-detail__art--loaded' : ''}${media.is_playing ? ' is-playing' : ''}`}>
-          {artwork ? <img src={artwork} alt="" /> : <Music2 size={20} />}
-          <span className={`media-detail__equalizer${media.is_playing ? ' is-playing' : ''}`} aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
+        <span key={media.title || 'art'} className={`media-detail__art${artwork ? ' media-detail__art--loaded' : ''}${media.is_playing ? ' is-playing' : ''}`}>
+          {artwork ? <img src={artwork} alt="" /> : <Music2 size={18} />}
+          <span className="media-detail__art-sheen" aria-hidden="true" />
         </span>
+
         <div className="media-detail__copy">
           <AnimatePresence mode="wait" initial={false}>
             <m.strong
@@ -109,67 +134,79 @@ export default function MediaDetail({
               {media.title || localize(language, 'Lagu tidak diketahui', 'Unknown track')}
             </m.strong>
           </AnimatePresence>
-          <small>{media.artist || localize(language, 'Artis tidak diketahui', 'Unknown artist')}</small>
           <div className="media-detail__meta-row">
+            <small>{media.artist || localize(language, 'Artis tidak diketahui', 'Unknown artist')}</small>
             {provider && (
               <span className="media-detail__provider">
                 {provider === 'spotify' ? 'SPOTIFY' : 'YT MUSIC'}
               </span>
             )}
-            <span className={`media-detail__visualizer${media.is_playing ? ' is-playing' : ''}`} aria-hidden="true">
-              <i /><i /><i /><i /><i />
-            </span>
           </div>
         </div>
-        {hasTrackTitle && (
+
+        <div className="media-detail__actions">
+          {hasTrackTitle && (
+            <button
+              type="button"
+              className={`media-detail__lyrics-toggle${showLyrics ? ' is-active' : ''}`}
+              aria-label={showLyrics ? localize(language, 'Sembunyikan lirik', 'Hide lyrics') : localize(language, 'Tampilkan lirik', 'Show lyrics')}
+              aria-pressed={showLyrics}
+              title={showLyrics ? localize(language, 'Sembunyikan lirik', 'Hide lyrics') : localize(language, 'Tampilkan lirik', 'Show lyrics')}
+              onClick={onToggleLyrics}
+            >
+              <Mic2 size={13} />
+            </button>
+          )}
           <button
             type="button"
-            className={`media-detail__lyrics-toggle${showLyrics ? ' is-active' : ''}`}
-            aria-label={showLyrics ? localize(language, 'Sembunyikan lirik', 'Hide lyrics') : localize(language, 'Tampilkan lirik', 'Show lyrics')}
-            aria-pressed={showLyrics}
-            title={showLyrics ? localize(language, 'Sembunyikan lirik', 'Hide lyrics') : localize(language, 'Tampilkan lirik', 'Show lyrics')}
-            onClick={onToggleLyrics}
+            className={`detail-action-button detail-action-button--pin${pinned ? ' is-active' : ''}`}
+            aria-label={pinned ? localize(language, 'Lepas sematan musik', 'Unpin music') : localize(language, 'Sematkan musik', 'Pin music')}
+            aria-pressed={pinned}
+            title={pinned ? localize(language, 'Lepas sematan musik', 'Unpin music') : localize(language, 'Sematkan musik', 'Pin music')}
+            onClick={onTogglePin}
           >
-            <Mic2 size={14} />
+            <Pin size={13} />
           </button>
-        )}
-        <button
-          type="button"
-          className={`detail-action-button detail-action-button--pin${pinned ? ' is-active' : ''}`}
-          aria-label={pinned ? localize(language, 'Lepas sematan musik', 'Unpin music') : localize(language, 'Sematkan musik', 'Pin music')}
-          aria-pressed={pinned}
-          title={pinned ? localize(language, 'Lepas sematan musik', 'Unpin music') : localize(language, 'Sematkan musik', 'Pin music')}
-          onClick={onTogglePin}
-        >
-          <Pin size={14} />
-        </button>
-        <button
-          type="button"
-          className="detail-action-button"
-          aria-label={localize(language, 'Tutup Now Playing', 'Close Now Playing')}
-          title={localize(language, 'Tutup Now Playing', 'Close Now Playing')}
-          onClick={(event) => { event.stopPropagation(); onReturnToLauncher(); }}
-        >
-          <X size={15} />
-        </button>
+          <button
+            type="button"
+            className="detail-action-button"
+            aria-label={localize(language, 'Tutup Now Playing', 'Close Now Playing')}
+            title={localize(language, 'Tutup Now Playing', 'Close Now Playing')}
+            onClick={(event) => { event.stopPropagation(); onReturnToLauncher(); }}
+          >
+            <X size={13} />
+          </button>
+        </div>
       </div>
 
-      <div className="media-detail__progress-wrap">
+      <div className="media-waveform-row">
+        <span className="media-waveform__time">{formatTrackTime(livePosition)}</span>
         <button
           type="button"
-          className="media-detail__progress-hit"
-          onClick={handleProgressClick}
+          className={`media-waveform${media.is_playing ? ' is-playing' : ''}`}
+          onClick={handleWaveformClick}
           disabled={media.duration_seconds <= 0}
           aria-label={localize(language, 'Geser posisi lagu', 'Seek track position')}
         >
-          <span className="media-detail__progress">
-            <span className="media-detail__progress-fill" style={{ width: `${progress}%` }} />
-          </span>
+          {waveformBars.map((barHeight, index) => {
+            const barPercent = ((index + 0.5) / WAVEFORM_BARS) * 100;
+            const isPlayed = barPercent <= progress;
+            const isHead = index === activeBarIndex && media.duration_seconds > 0;
+            return (
+              <span
+                key={index}
+                className={`media-waveform__bar${isPlayed ? ' is-played' : ''}${isHead ? ' is-head' : ''}`}
+                style={{
+                  height: `${barHeight}%`,
+                  animationDelay: `${(index % 7) * 0.09}s`
+                }}
+              />
+            );
+          })}
         </button>
-        <div className="media-detail__times">
-          <span>{formatTrackTime(livePosition)}</span>
-          <span>{media.duration_seconds > 0 ? formatTrackTime(media.duration_seconds) : '--:--'}</span>
-        </div>
+        <span className="media-waveform__time">
+          {media.duration_seconds > 0 ? formatTrackTime(media.duration_seconds) : '--:--'}
+        </span>
       </div>
 
       {showLyrics && hasTrackTitle && (
@@ -194,7 +231,7 @@ export default function MediaDetail({
           title={localize(language, 'Lagu sebelumnya', 'Previous track')}
           onClick={() => onMediaAction('previous')}
         >
-          <SkipBack size={16} />
+          <SkipBack size={15} />
         </m.button>
         <m.button
           whileHover={{ scale: 1.08 }}
@@ -204,7 +241,7 @@ export default function MediaDetail({
           title={media.is_playing ? 'Pause' : 'Play'}
           onClick={() => onMediaAction('playPause')}
         >
-          {media.is_playing ? <Pause size={16} /> : <Play size={16} />}
+          {media.is_playing ? <Pause size={15} /> : <Play size={15} />}
         </m.button>
         <m.button
           whileHover={{ scale: 1.08 }}
@@ -213,7 +250,7 @@ export default function MediaDetail({
           title={localize(language, 'Lagu berikutnya', 'Next track')}
           onClick={() => onMediaAction('next')}
         >
-          <SkipForward size={16} />
+          <SkipForward size={15} />
         </m.button>
       </div>
     </m.section>

@@ -9,7 +9,7 @@ use std::io::Write;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -59,8 +59,9 @@ use windows::Win32::System::Threading::{CreateMutexW, GetSystemTimes};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetLastInputInfo, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
     KEYEVENTF_KEYUP, LASTINPUTINFO, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, SendInput,
-    VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_G, VK_LWIN, VK_MENU, VK_NUMLOCK, VK_S,
-    VK_SCROLL, VK_SHIFT, VK_SPACE, VK_V, VK_X,
+    VIRTUAL_KEY, VK_C, VK_CAPITAL, VK_CONTROL, VK_G, VK_LWIN, VK_MEDIA_NEXT_TRACK,
+    VK_MEDIA_PLAY_PAUSE, VK_MEDIA_PREV_TRACK, VK_MENU, VK_NUMLOCK, VK_S, VK_SCROLL, VK_SHIFT,
+    VK_SPACE, VK_V, VK_X,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_STYLE, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongW, GetWindowRect,
@@ -80,7 +81,10 @@ static PENDING_SNIP_CAPTURE: Mutex<Option<(Instant, u32)>> = Mutex::new(None);
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static AUTO_HIDE_FULLSCREEN: AtomicBool = AtomicBool::new(true);
 static CLICK_THROUGH_MODE: AtomicU8 = AtomicU8::new(0);
+static LAST_PASS_THROUGH: AtomicBool = AtomicBool::new(false);
 static ISLAND_IS_IDLE: AtomicBool = AtomicBool::new(true);
+static MAIN_WINDOW_HWND: AtomicIsize = AtomicIsize::new(0);
+static CURRENT_MONITOR_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 const HOTKEY_TOGGLE_VISIBILITY: i32 = 1;
 const HOTKEY_TOGGLE_CLICK_THROUGH: i32 = 2;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -472,7 +476,7 @@ async fn create_clickup_tasks(
 }
 
 #[tauri::command]
-fn seek_media(position_seconds: f64) -> Result<(), String> {
+async fn seek_media(position_seconds: f64) -> Result<(), String> {
     if !position_seconds.is_finite() || position_seconds < 0.0 {
         return Err("Posisi media tidak valid".to_string());
     }
@@ -503,7 +507,8 @@ fn seek_media(position_seconds: f64) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn write_clipboard_text(text: &str) -> Result<(), String> {
+async fn write_clipboard_text(text: String) -> Result<(), String> {
+    let text = text.as_str();
     let mut encoded: Vec<u16> = text.encode_utf16().take(10_000).collect();
     encoded.push(0);
 
@@ -532,7 +537,7 @@ fn write_clipboard_text(text: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_display_brightness() -> Result<u8, String> {
+async fn get_display_brightness() -> Result<u8, String> {
     let output = command_no_window("powershell")
         .args([
             "-NoProfile",
@@ -553,7 +558,7 @@ fn get_display_brightness() -> Result<u8, String> {
 }
 
 #[tauri::command]
-fn set_display_brightness(level: u8) -> Result<(), String> {
+async fn set_display_brightness(level: u8) -> Result<(), String> {
     let level = level.min(100);
     let script = format!(
         "$methods = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Select-Object -First 1; if (-not $methods) {{ throw 'No supported display brightness control was found.' }}; $result = $methods.WmiSetBrightness(1, {level}); if ($result.ReturnValue -ne 0) {{ throw \"Brightness update failed with code $($result.ReturnValue).\" }}"
@@ -612,6 +617,7 @@ fn configure_borderless_island_window(window: &tauri::WebviewWindow) -> Result<(
         .hwnd()
         .map(|handle| HWND(handle.0 as isize))
         .map_err(|error| error.to_string())?;
+    MAIN_WINDOW_HWND.store(hwnd.0, Ordering::Relaxed);
     unsafe {
         let current_style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let stripped = current_style
@@ -646,7 +652,7 @@ struct MonitorOption {
 }
 
 #[tauri::command]
-fn list_monitors(app: tauri::AppHandle) -> Result<Vec<MonitorOption>, String> {
+async fn list_monitors(app: tauri::AppHandle) -> Result<Vec<MonitorOption>, String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Jendela utama Dynamic Island tidak ditemukan".to_string())?;
@@ -712,6 +718,14 @@ fn apply_island_window_bounds(
     let scale_factor = monitor.scale_factor().max(0.1);
     let monitor_pos = monitor.position();
     let monitor_size = monitor.size();
+    if let Ok(mut rect_guard) = CURRENT_MONITOR_RECT.lock() {
+        *rect_guard = Some((
+            monitor_pos.x,
+            monitor_pos.y,
+            monitor_size.width as i32,
+            monitor_size.height as i32,
+        ));
+    }
     let phys_width = (width * scale_factor).ceil() as i32;
     let phys_height = (height * scale_factor).ceil() as i32;
     let phys_offset = if edge_offset.is_finite() {
@@ -734,6 +748,7 @@ fn apply_island_window_bounds(
         .hwnd()
         .map(|handle| HWND(handle.0 as isize))
         .map_err(|error| error.to_string())?;
+    MAIN_WINDOW_HWND.store(hwnd.0, Ordering::Relaxed);
     unsafe {
         SetWindowPos(
             hwnd,
@@ -758,17 +773,18 @@ fn set_island_window_bounds(
     edge_offset: Option<f64>,
     monitor_index: Option<usize>,
 ) -> Result<(), String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "Jendela utama Dynamic Island tidak ditemukan".to_string())?;
-    apply_island_window_bounds(
-        &window,
-        width,
-        height,
-        position,
-        edge_offset.unwrap_or(0.0),
-        monitor_index,
-    )
+    let app_clone = app.clone();
+    let offset = edge_offset.unwrap_or(0.0);
+    app.run_on_main_thread(move || {
+        if let Some(window) = app_clone.get_webview_window("main") {
+            if let Err(error) =
+                apply_island_window_bounds(&window, width, height, position, offset, monitor_index)
+            {
+                eprintln!("Gagal memposisikan jendela Dynamic Island: {error}");
+            }
+        }
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -818,7 +834,7 @@ fn send_keyboard_shortcut(
 }
 
 #[tauri::command]
-fn open_snipping_tool() -> Result<(), String> {
+async fn open_snipping_tool() -> Result<(), String> {
     {
         let mut pending = PENDING_SNIP_CAPTURE
             .lock()
@@ -1182,7 +1198,7 @@ struct AiChatMessage {
 }
 
 #[tauri::command]
-fn run_screenshot_ocr(app: tauri::AppHandle, image_path: Option<String>) -> Result<String, String> {
+async fn run_screenshot_ocr(app: tauri::AppHandle, image_path: Option<String>) -> Result<String, String> {
     let mut temp_file: Option<PathBuf> = None;
     let target_path = if let Some(path) = image_path.filter(|p| !p.trim().is_empty()) {
         PathBuf::from(path)
@@ -1265,7 +1281,7 @@ Write-Output $result.Text
 
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !text.is_empty() {
-        let _ = write_clipboard_text(&text);
+        let _ = write_clipboard_text(text.clone()).await;
     }
     Ok(text)
 }
@@ -1334,7 +1350,7 @@ async fn send_ai_chat(
 }
 
 #[tauri::command]
-fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
+async fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
     let main_window = app.get_webview_window("main");
     let was_visible = main_window
         .as_ref()
@@ -1364,7 +1380,7 @@ fn take_screenshot(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn list_capture_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+async fn list_capture_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let directory = screenshot_directory(&app)?;
     let mut files = Vec::new();
     for entry in fs::read_dir(&directory)
@@ -1387,7 +1403,7 @@ fn list_capture_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn delete_capture_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+async fn delete_capture_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let directory = screenshot_directory(&app)?;
     let canonical_directory = fs::canonicalize(&directory).map_err(|error| error.to_string())?;
     let canonical_file = fs::canonicalize(&path).map_err(|error| error.to_string())?;
@@ -1408,9 +1424,20 @@ fn delete_capture_file(app: tauri::AppHandle, path: String) -> Result<(), String
         .map_err(|error| format!("Tidak dapat menghapus screenshot: {error}"))
 }
 
+fn send_media_key_fallback(action: &str) -> Result<(), String> {
+    let vk = match action {
+        "playPause" => VK_MEDIA_PLAY_PAUSE,
+        "next" => VK_MEDIA_NEXT_TRACK,
+        "previous" => VK_MEDIA_PREV_TRACK,
+        _ => return Err("Aksi media tidak dikenal".to_string()),
+    };
+    send_keyboard_shortcut(&[], vk, action)
+}
+
 #[tauri::command]
-fn control_media(action: &str) -> Result<(), String> {
-    unsafe {
+async fn control_media(action: String) -> Result<(), String> {
+    let action = action.as_str();
+    let gsmtc_result = unsafe {
         let _ = CoInitialize(None);
         let result = (|| {
             let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
@@ -1436,11 +1463,21 @@ fn control_media(action: &str) -> Result<(), String> {
         })();
         CoUninitialize();
         result
+    };
+
+    if gsmtc_result.is_ok() {
+        Ok(())
+    } else {
+        send_media_key_fallback(action)
     }
 }
 
 #[tauri::command]
-fn get_battery_info() -> Result<BatteryInfo, String> {
+async fn get_battery_info() -> Result<BatteryInfo, String> {
+    read_battery_info()
+}
+
+fn read_battery_info() -> Result<BatteryInfo, String> {
     let mut status = SYSTEM_POWER_STATUS::default();
     if unsafe { GetSystemPowerStatus(&mut status) }.is_ok() {
         if status.BatteryFlag == 128 {
@@ -1523,7 +1560,7 @@ fn get_battery_info() -> Result<BatteryInfo, String> {
 }
 
 #[tauri::command]
-fn get_system_volume() -> Result<f32, String> {
+async fn get_system_volume() -> Result<f32, String> {
     unsafe {
         let _ = CoInitialize(None);
         let enumerator: IMMDeviceEnumerator =
@@ -1545,7 +1582,7 @@ fn get_system_volume() -> Result<f32, String> {
 }
 
 #[tauri::command]
-fn set_system_volume(volume: f32) -> Result<(), String> {
+async fn set_system_volume(volume: f32) -> Result<(), String> {
     unsafe {
         let _ = CoInitialize(None);
         let enumerator: IMMDeviceEnumerator =
@@ -1707,7 +1744,7 @@ impl Drop for MonitorComState {
 }
 
 #[tauri::command]
-fn get_current_media_artwork() -> Result<Option<String>, String> {
+async fn get_current_media_artwork() -> Result<Option<String>, String> {
     unsafe {
         let _ = CoInitialize(None);
         let result = (|| {
@@ -1812,7 +1849,7 @@ fn get_windows_notifications_with(
 }
 
 #[tauri::command]
-fn request_windows_notification_access(app: tauri::AppHandle) -> Result<String, String> {
+async fn request_windows_notification_access(app: tauri::AppHandle) -> Result<String, String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         let operation =
@@ -2106,8 +2143,7 @@ fn get_current_ssid() -> String {
     }
 }
 
-#[tauri::command]
-fn get_network_info() -> NetworkInfo {
+fn read_network_info() -> NetworkInfo {
     let ssid = get_current_ssid();
     NetworkInfo {
         is_connected: !ssid.is_empty(),
@@ -2116,7 +2152,12 @@ fn get_network_info() -> NetworkInfo {
 }
 
 #[tauri::command]
-fn toggle_wifi(enable: bool) -> Result<(), String> {
+async fn get_network_info() -> NetworkInfo {
+    read_network_info()
+}
+
+#[tauri::command]
+async fn toggle_wifi(enable: bool) -> Result<(), String> {
     let state = if enable { "enable" } else { "disable" };
     command_no_window("netsh")
         .args([
@@ -2132,7 +2173,8 @@ fn toggle_wifi(enable: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_power_plan(mode: &str) -> Result<(), String> {
+async fn set_power_plan(mode: String) -> Result<(), String> {
+    let mode = mode.as_str();
     let guid = match mode {
         "saver" => "a1841308-3541-4fab-bc81-f71556f20b4a",
         "performance" => "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
@@ -2146,7 +2188,7 @@ fn set_power_plan(mode: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn scan_wifi() -> Result<Vec<String>, String> {
+async fn scan_wifi() -> Result<Vec<String>, String> {
     let output = command_no_window("netsh")
         .args(["wlan", "show", "networks"])
         .output()
@@ -2167,7 +2209,7 @@ fn scan_wifi() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn connect_wifi(ssid: &str) -> Result<(), String> {
+async fn connect_wifi(ssid: String) -> Result<(), String> {
     command_no_window("netsh")
         .args(["wlan", "connect", &format!("name={}", ssid)])
         .spawn()
@@ -2249,16 +2291,27 @@ fn compute_effective_click_through(mode: u8, is_idle: bool, alt_held: bool) -> b
     }
 }
 
+fn dispatch_ignore_cursor_events(app: &tauri::AppHandle, pass_through: bool) {
+    let previous = LAST_PASS_THROUGH.swap(pass_through, Ordering::Relaxed);
+    if previous == pass_through {
+        return;
+    }
+    let app_clone = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = app_clone.get_webview_window("main") {
+            let _ = window.set_ignore_cursor_events(pass_through);
+        }
+    });
+}
+
 #[tauri::command]
-fn set_click_through_mode(app: tauri::AppHandle, mode: String) {
+async fn set_click_through_mode(app: tauri::AppHandle, mode: String) {
     let code = click_through_mode_to_u8(&mode);
     CLICK_THROUGH_MODE.store(code, Ordering::Relaxed);
     let is_idle = ISLAND_IS_IDLE.load(Ordering::Relaxed);
     let alt_held = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) } < 0;
     let pass_through = compute_effective_click_through(code, is_idle, alt_held);
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_ignore_cursor_events(pass_through);
-    }
+    dispatch_ignore_cursor_events(&app, pass_through);
     let _ = app.emit("click-through-state", pass_through);
 }
 
@@ -2275,9 +2328,7 @@ fn toggle_click_through_from_shortcut(app: &tauri::AppHandle) {
     let is_idle = ISLAND_IS_IDLE.load(Ordering::Relaxed);
     let alt_held = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) } < 0;
     let pass_through = compute_effective_click_through(next, is_idle, alt_held);
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_ignore_cursor_events(pass_through);
-    }
+    dispatch_ignore_cursor_events(app, pass_through);
     let _ = app.emit("click-through-mode-changed", mode_str);
     let _ = app.emit("click-through-state", pass_through);
 }
@@ -2303,16 +2354,21 @@ fn start_overlay_interaction_watcher(app_handle: tauri::AppHandle) {
             }
         }
 
-        let mut last_pass_through: Option<bool> = None;
+        let mut last_pass_through = false;
         let mut msg = MSG::default();
 
         loop {
             while unsafe { PeekMessageW(&mut msg, HWND(0), 0, 0, PM_REMOVE) }.as_bool() {
                 if msg.message == WM_HOTKEY {
                     match msg.wParam.0 as i32 {
-                        HOTKEY_TOGGLE_VISIBILITY => toggle_window_from_tray(&app_handle),
+                        HOTKEY_TOGGLE_VISIBILITY => {
+                            let app_clone = app_handle.clone();
+                            let _ = app_handle.run_on_main_thread(move || {
+                                toggle_window_from_tray(&app_clone);
+                            });
+                        }
                         HOTKEY_TOGGLE_CLICK_THROUGH => {
-                            toggle_click_through_from_shortcut(&app_handle)
+                            toggle_click_through_from_shortcut(&app_handle);
                         }
                         _ => {}
                     }
@@ -2324,12 +2380,10 @@ fn start_overlay_interaction_watcher(app_handle: tauri::AppHandle) {
             let alt_held = unsafe { GetAsyncKeyState(VK_MENU.0 as i32) } < 0;
             let pass_through = compute_effective_click_through(mode, is_idle, alt_held);
 
-            if last_pass_through != Some(pass_through) {
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.set_ignore_cursor_events(pass_through);
-                }
+            if last_pass_through != pass_through {
+                dispatch_ignore_cursor_events(&app_handle, pass_through);
                 let _ = app_handle.emit("click-through-state", pass_through);
-                last_pass_through = Some(pass_through);
+                last_pass_through = pass_through;
             }
 
             thread::sleep(Duration::from_millis(40));
@@ -2580,7 +2634,7 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
         let mut previous_cpu_times = None;
         let mut last_battery_error: Option<String> = None;
         let mut last_payload: Option<SysData> = None;
-        let mut cached_network = get_network_info();
+        let mut cached_network = read_network_info();
         let mut cached_camera_app: Option<String> = None;
         let mut cached_mic_app: Option<String> = None;
         let mut cached_download: Option<ActiveDownloadInfo> = None;
@@ -2588,7 +2642,6 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
         let mut prev_net_bytes: Option<(Instant, u64, u64)> = None;
         let mut cached_net_speed: (Option<u64>, Option<u64>) = (None, None);
         let mut hidden_by_fullscreen = false;
-        let mut last_monitor_rect: Option<(i32, i32, i32, i32)> = None;
         let mut tick: u64 = 0;
 
         loop {
@@ -2613,7 +2666,7 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                     (None, None)
                 }
             };
-            let (battery, battery_error) = match get_battery_info() {
+            let (battery, battery_error) = match read_battery_info() {
                 Ok(battery) => {
                     last_battery_error = None;
                     (battery, None)
@@ -2634,7 +2687,7 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
             };
             let (volume, microphone_muted, output_muted) = com.read_audio_state();
             if tick > 0 && tick % 5 == 0 {
-                cached_network = get_network_info();
+                cached_network = read_network_info();
             }
             let network = &cached_network;
             let current_ac = is_ac_connected();
@@ -2722,26 +2775,33 @@ fn start_system_monitor(app_handle: tauri::AppHandle) {
                 cached_mic_app = current_mic_app;
             }
 
-            if let Some(main_window) = app_handle.get_webview_window("main") {
-                if let Ok(raw_hwnd) = main_window.hwnd() {
-                    let own_hwnd = HWND(raw_hwnd.0 as isize);
-                    if let Ok(Some(monitor)) = main_window.current_monitor() {
-                        let pos = monitor.position();
-                        let size = monitor.size();
-                        last_monitor_rect = Some((pos.x, pos.y, size.width as i32, size.height as i32));
+            let own_hwnd_raw = MAIN_WINDOW_HWND.load(Ordering::Relaxed);
+            if own_hwnd_raw != 0 {
+                let own_hwnd = HWND(own_hwnd_raw);
+                let monitor_rect = CURRENT_MONITOR_RECT.lock().ok().and_then(|guard| *guard);
+                let should_auto_hide = AUTO_HIDE_FULLSCREEN.load(Ordering::Relaxed);
+                let other_fullscreen =
+                    should_auto_hide && is_other_window_fullscreen(own_hwnd, monitor_rect);
+                if other_fullscreen {
+                    if !hidden_by_fullscreen {
+                        let app_clone = app_handle.clone();
+                        let _ = app_handle.run_on_main_thread(move || {
+                            if let Some(main_window) = app_clone.get_webview_window("main") {
+                                if main_window.is_visible().unwrap_or(false) {
+                                    let _ = main_window.hide();
+                                }
+                            }
+                        });
+                        hidden_by_fullscreen = true;
                     }
-                    let should_auto_hide = AUTO_HIDE_FULLSCREEN.load(Ordering::Relaxed);
-                    let other_fullscreen =
-                        should_auto_hide && is_other_window_fullscreen(own_hwnd, last_monitor_rect);
-                    if other_fullscreen {
-                        if !hidden_by_fullscreen && main_window.is_visible().unwrap_or(false) {
-                            let _ = main_window.hide();
-                            hidden_by_fullscreen = true;
+                } else if hidden_by_fullscreen {
+                    let app_clone = app_handle.clone();
+                    let _ = app_handle.run_on_main_thread(move || {
+                        if let Some(main_window) = app_clone.get_webview_window("main") {
+                            let _ = main_window.show();
                         }
-                    } else if hidden_by_fullscreen {
-                        let _ = main_window.show();
-                        hidden_by_fullscreen = false;
-                    }
+                    });
+                    hidden_by_fullscreen = false;
                 }
             }
 
@@ -3379,7 +3439,7 @@ async fn fetch_synced_lyrics(
 }
 
 #[tauri::command]
-fn get_windows_startup_config() -> Result<WindowsStartupConfig, String> {
+async fn get_windows_startup_config() -> Result<WindowsStartupConfig, String> {
     let output = command_no_window("reg.exe")
         .args([
             "query",
@@ -3417,7 +3477,7 @@ fn get_windows_startup_config() -> Result<WindowsStartupConfig, String> {
 }
 
 #[tauri::command]
-fn set_windows_startup_config(
+async fn set_windows_startup_config(
     enabled: bool,
     start_hidden: bool,
     delay_seconds: u8,
@@ -3483,6 +3543,7 @@ fn set_windows_startup_config(
 fn open_settings_from_tray(app: &tauri::AppHandle) {
     if CLICK_THROUGH_MODE.load(Ordering::Relaxed) == 1 {
         CLICK_THROUGH_MODE.store(0, Ordering::Relaxed);
+        LAST_PASS_THROUGH.store(false, Ordering::Relaxed);
         let _ = app.emit("click-through-mode-changed", "off");
         let _ = app.emit("click-through-state", false);
     }
@@ -3538,13 +3599,9 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            #[cfg(debug_assertions)]
+            eprintln!("[DI] setup: init settings");
             initialize_app_settings(&app_handle).map_err(std::io::Error::other)?;
-
-            // Jalankan thread pemantauan
-            start_system_monitor(app_handle.clone());
-            start_clipboard_activity_monitor(app_handle.clone());
-            start_windows_notification_monitor(app_handle.clone());
-            start_overlay_interaction_watcher(app_handle.clone());
 
             let window = app
                 .get_webview_window("main")
@@ -3554,6 +3611,8 @@ fn main() {
             configure_borderless_island_window(&window).map_err(std::io::Error::other)?;
             apply_island_window_bounds(&window, 204.0, 38.0, 0, 0.0, None)
                 .map_err(std::io::Error::other)?;
+            #[cfg(debug_assertions)]
+            eprintln!("[DI] setup: window configured");
 
             let icon = app.default_window_icon().cloned().ok_or_else(|| {
                 std::io::Error::other("Ikon aplikasi untuk system tray tidak ditemukan")
@@ -3603,6 +3662,14 @@ fn main() {
             if !start_hidden {
                 window.show()?;
             }
+
+            // Jalankan thread pemantauan setelah jendela siap
+            start_system_monitor(app_handle.clone());
+            start_clipboard_activity_monitor(app_handle.clone());
+            start_windows_notification_monitor(app_handle.clone());
+            start_overlay_interaction_watcher(app_handle.clone());
+            #[cfg(debug_assertions)]
+            eprintln!("[DI] setup: done");
 
             Ok(())
         })

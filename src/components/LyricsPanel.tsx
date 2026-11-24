@@ -1,20 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ExternalLink, Music2, RefreshCw } from 'lucide-react';
 import { localize, type AppLanguage } from '../lib/i18n';
+import {
+  clearLyricsCacheEntry,
+  fetchLyricsCached,
+  getActiveLyricIndex,
+  getCachedLyrics,
+  parseLrc,
+  type LyricsPayload
+} from '../lib/lyrics';
 import type { MediaProvider } from '../types';
-
-interface LyricsPayload {
-  syncedLyrics: string | null;
-  plainLyrics: string | null;
-  instrumental: boolean;
-}
-
-interface SyncedLine {
-  time: number;
-  text: string;
-}
 
 interface LyricsPanelProps {
   title: string;
@@ -26,31 +22,6 @@ interface LyricsPanelProps {
   onSeek: (seconds: number) => void;
 }
 
-const lyricsCache = new Map<string, LyricsPayload | null>();
-
-function parseLrc(raw: string): SyncedLine[] {
-  const lines: SyncedLine[] = [];
-  const pattern = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
-  for (const row of raw.split(/\r?\n/)) {
-    const timestamps: number[] = [];
-    let match: RegExpExecArray | null;
-    pattern.lastIndex = 0;
-    while ((match = pattern.exec(row)) !== null) {
-      const minutes = Number(match[1]);
-      const seconds = Number(match[2]);
-      const frac = match[3] ? Number(match[3].padEnd(3, '0')) / 1000 : 0;
-      timestamps.push(minutes * 60 + seconds + frac);
-    }
-    const text = row.replace(pattern, '').trim();
-    if (!timestamps.length || !text) continue;
-    for (const time of timestamps) {
-      lines.push({ time, text });
-    }
-  }
-  lines.sort((a, b) => a.time - b.time);
-  return lines;
-}
-
 export default function LyricsPanel({
   title,
   artist,
@@ -60,10 +31,10 @@ export default function LyricsPanel({
   language,
   onSeek
 }: LyricsPanelProps) {
-  const cacheKey = `${title.trim().toLowerCase()}|${artist.trim().toLowerCase()}`;
-  const [payload, setPayload] = useState<LyricsPayload | null>(() => lyricsCache.get(cacheKey) ?? null);
-  const [loading, setLoading] = useState(() => !lyricsCache.has(cacheKey));
+  const [payload, setPayload] = useState<LyricsPayload | null>(() => getCachedLyrics(title, artist) ?? null);
+  const [loading, setLoading] = useState(() => getCachedLyrics(title, artist) === undefined);
   const [retrySeq, setRetrySeq] = useState(0);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const activeLineRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -73,36 +44,25 @@ export default function LyricsPanel({
       setLoading(false);
       return;
     }
-    if (retrySeq === 0 && lyricsCache.has(cacheKey)) {
-      setPayload(lyricsCache.get(cacheKey) ?? null);
+    const cached = getCachedLyrics(trimmedTitle, artist);
+    if (retrySeq === 0 && cached !== undefined) {
+      setPayload(cached);
       setLoading(false);
       return;
     }
 
     let active = true;
     setLoading(true);
-    void invoke<LyricsPayload>('fetch_synced_lyrics', {
-      title: trimmedTitle,
-      artist: artist.trim(),
-      durationSeconds
-    })
-      .then((result) => {
-        if (!active) return;
-        lyricsCache.set(cacheKey, result);
-        setPayload(result);
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!active) return;
-        lyricsCache.set(cacheKey, null);
-        setPayload(null);
-        setLoading(false);
-      });
+    void fetchLyricsCached(trimmedTitle, artist, durationSeconds).then((result) => {
+      if (!active) return;
+      setPayload(result);
+      setLoading(false);
+    });
 
     return () => {
       active = false;
     };
-  }, [cacheKey, title, artist, durationSeconds, retrySeq]);
+  }, [title, artist, durationSeconds, retrySeq]);
 
   const syncedLines = useMemo(
     () => (payload?.syncedLyrics ? parseLrc(payload.syncedLyrics) : []),
@@ -116,23 +76,33 @@ export default function LyricsPanel({
     [payload?.plainLyrics]
   );
 
-  const activeIndex = useMemo(() => {
-    if (!syncedLines.length) return -1;
-    let index = -1;
-    for (let i = 0; i < syncedLines.length; i += 1) {
-      if (syncedLines[i].time <= positionSeconds + 0.35) {
-        index = i;
-      } else {
-        break;
-      }
-    }
-    return index;
-  }, [syncedLines, positionSeconds]);
+  const activeIndex = useMemo(
+    () => getActiveLyricIndex(syncedLines, positionSeconds),
+    [syncedLines, positionSeconds]
+  );
 
+  // Smooth auto-scroll centered on the active line inside the 3-line viewport
   useEffect(() => {
-    if (activeIndex < 0) return;
-    activeLineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [activeIndex]);
+    const container = scrollContainerRef.current;
+    const activeEl = activeLineRef.current;
+    if (!container || !activeEl) return;
+    const targetTop = Math.max(
+      0,
+      activeEl.offsetTop - (container.clientHeight - activeEl.clientHeight) / 2
+    );
+    container.scrollTo({ top: targetTop, behavior: 'smooth' });
+  }, [activeIndex, syncedLines.length]);
+
+  // Smooth proportional auto-scroll for plain (unsynced) lyrics
+  useEffect(() => {
+    if (syncedLines.length > 0 || plainLines.length === 0 || durationSeconds <= 0) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+    if (maxScroll <= 0) return;
+    const ratio = Math.max(0, Math.min(1, positionSeconds / durationSeconds));
+    container.scrollTo({ top: maxScroll * ratio, behavior: 'smooth' });
+  }, [syncedLines.length, plainLines.length, positionSeconds, durationSeconds]);
 
   const track = [title, artist].filter(Boolean).join(' ');
   const externalUrl = provider === 'spotify'
@@ -144,9 +114,9 @@ export default function LyricsPanel({
   if (loading) {
     return (
       <div className="media-lyrics media-lyrics--loading" aria-busy="true">
-        <span className="media-lyrics__skeleton" style={{ width: '72%' }} />
-        <span className="media-lyrics__skeleton" style={{ width: '90%' }} />
-        <span className="media-lyrics__skeleton" style={{ width: '60%' }} />
+        <span className="media-lyrics__skeleton" style={{ width: '68%' }} />
+        <span className="media-lyrics__skeleton" style={{ width: '86%' }} />
+        <span className="media-lyrics__skeleton" style={{ width: '56%' }} />
       </div>
     );
   }
@@ -154,19 +124,20 @@ export default function LyricsPanel({
   if (payload?.instrumental) {
     return (
       <div className="media-lyrics media-lyrics--empty">
-        <Music2 size={16} />
+        <Music2 size={14} />
         <p className="media-lyrics__status">{localize(language, 'Lagu instrumental ♪', 'Instrumental track ♪')}</p>
       </div>
     );
   }
 
   if (syncedLines.length > 0) {
+    const targetIndex = activeIndex >= 0 ? activeIndex : 0;
     return (
       <div className="media-lyrics media-lyrics--synced" role="region" aria-label={localize(language, 'Lirik tersinkron', 'Synced lyrics')}>
-        <div className="media-lyrics__scroll">
+        <div ref={scrollContainerRef} className="media-lyrics__scroll">
           {syncedLines.map((line, index) => {
-            const isActive = index === activeIndex;
-            const isPast = activeIndex >= 0 && index < activeIndex;
+            const isActive = index === targetIndex;
+            const isPast = index < targetIndex;
             return (
               <button
                 key={`${line.time}-${index}`}
@@ -174,7 +145,7 @@ export default function LyricsPanel({
                 type="button"
                 className={`media-lyrics__line${isActive ? ' is-active' : ''}${isPast ? ' is-past' : ''}`}
                 onClick={() => onSeek(line.time)}
-                title={localize(language, 'Klik untuk lompat ke bagian ini', 'Click to jump to this line')}
+                title={line.text}
               >
                 {line.text}
               </button>
@@ -188,9 +159,9 @@ export default function LyricsPanel({
   if (plainLines.length > 0) {
     return (
       <div className="media-lyrics media-lyrics--plain" role="region" aria-label={localize(language, 'Lirik lagu', 'Track lyrics')}>
-        <div className="media-lyrics__scroll">
+        <div ref={scrollContainerRef} className="media-lyrics__scroll">
           {plainLines.map((line, index) => (
-            <p key={index} className="media-lyrics__plain-line">{line}</p>
+            <p key={index} className="media-lyrics__plain-line" title={line}>{line}</p>
           ))}
         </div>
       </div>
@@ -200,14 +171,14 @@ export default function LyricsPanel({
   return (
     <div className="media-lyrics media-lyrics--empty">
       <p className="media-lyrics__status">
-        {localize(language, 'Lirik belum ditemukan.', 'Lyrics not found.')}
+        {localize(language, 'Lirik belum ditemukan', 'Lyrics not found')}
       </p>
       <div className="media-lyrics__actions">
         <button
           className="media-lyrics__open"
           type="button"
           onClick={() => {
-            lyricsCache.delete(cacheKey);
+            clearLyricsCacheEntry(title, artist);
             setRetrySeq((seq) => seq + 1);
           }}
         >
@@ -219,7 +190,7 @@ export default function LyricsPanel({
           type="button"
           onClick={() => { void openUrl(externalUrl).catch(() => {}); }}
         >
-          <span>{provider === 'spotify' ? 'Spotify' : provider === 'youtube-music' ? 'YT Music' : localize(language, 'Cari web', 'Web search')}</span>
+          <span>{provider === 'spotify' ? 'Spotify' : provider === 'youtube-music' ? 'YT Music' : localize(language, 'Cari web', 'Web')}</span>
           <ExternalLink size={11} />
         </button>
       </div>

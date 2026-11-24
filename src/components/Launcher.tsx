@@ -1,4 +1,4 @@
-import { m } from 'framer-motion';
+import { m, type Transition } from 'framer-motion';
 import { Camera, ExternalLink, Gauge, LayoutGrid, LockKeyhole, Music2, Sparkles } from 'lucide-react';
 import { localize, type AppLanguage } from '../lib/i18n';
 import type { CustomShortcut, LauncherColumns, LauncherItemId, LayoutItemConfig } from '../lib/layoutSettings';
@@ -14,7 +14,7 @@ interface LauncherProps {
   isSidePosition: boolean;
   travelX: number;
   travelY: number;
-  transition: { duration: number; ease: number[] };
+  transition: Transition;
   onOpenTools: () => void;
   onOpenMedia: () => void;
   onOpenSystemMonitor: () => void;
@@ -61,18 +61,25 @@ export default function Launcher({
       transition={transition}
       aria-label={localize(language, 'Menu Dynamic Island', 'Dynamic Island menu')}
     >
-      {effectiveItems.map(({ id }) => {
+      {effectiveItems.map(({ id }, index) => {
+        const itemMotion = {
+          initial: { opacity: 0, y: 6, scale: 0.94 },
+          animate: { opacity: 1, y: 0, scale: 1 },
+          transition: { delay: index * 0.025, duration: 0.22, ease: [0.22, 1, 0.36, 1] as const },
+          whileHover: { y: -2, scale: 1.03 },
+          whileTap: { scale: 0.94 }
+        };
         if (id === 'tools') {
           return (
-            <button key="tools" className="launcher-item" onClick={onOpenTools} aria-label={localize(language, 'Alat', 'Tools')}>
+            <m.button key="tools" {...itemMotion} className="launcher-item" onClick={onOpenTools} aria-label={localize(language, 'Alat', 'Tools')}>
               <span className="launcher-item__icon"><LayoutGrid size={16} /></span>
               <span className="launcher-item__copy"><strong>{localize(language, 'Alat', 'Tools')}</strong></span>
-            </button>
+            </m.button>
           );
         }
         if (id === 'music') {
           return (
-            <button key="music" className="launcher-item launcher-item--music" onClick={onOpenMedia} disabled={!media} aria-label={localize(language, 'Musik', 'Music')}>
+            <m.button key="music" {...itemMotion} whileHover={media ? { y: -2, scale: 1.03 } : undefined} whileTap={media ? { scale: 0.94 } : undefined} className="launcher-item launcher-item--music" onClick={onOpenMedia} disabled={!media} aria-label={localize(language, 'Musik', 'Music')}>
               <span className={`launcher-item__icon${artwork ? ' launcher-item__icon--art' : ''}`}>
                 {artwork ? <img src={artwork} alt="" /> : <Music2 size={16} />}
               </span>
@@ -81,43 +88,48 @@ export default function Launcher({
                 {media?.artist && <small>{media.artist.length > 10 ? `${media.artist.slice(0, 8)}...` : media.artist}</small>}
               </span>
               {media?.is_playing && <i className="launcher-item__playing" aria-label={localize(language, 'Sedang diputar', 'Now playing')} />}
-            </button>
+            </m.button>
           );
         }
         if (id === 'monitor') {
           return (
-            <button key="monitor" className="launcher-item" onClick={onOpenSystemMonitor} aria-label={localize(language, 'Monitor sistem', 'System monitor')}>
+            <m.button key="monitor" {...itemMotion} className="launcher-item" onClick={onOpenSystemMonitor} aria-label={localize(language, 'Monitor sistem', 'System monitor')}>
               <span className="launcher-item__icon"><Gauge size={16} /></span>
               <span className="launcher-item__copy"><strong>Monitor</strong></span>
-            </button>
+            </m.button>
           );
         }
         if (id === 'ai') {
           return (
-            <button key="ai" className="launcher-item" onClick={onOpenAi} aria-label="AI Chat">
+            <m.button key="ai" {...itemMotion} className="launcher-item" onClick={onOpenAi} aria-label="AI Chat">
               <span className="launcher-item__icon"><Sparkles size={16} /></span>
               <span className="launcher-item__copy"><strong>AI</strong></span>
-            </button>
+            </m.button>
           );
         }
         if (id === 'capture') {
           return (
-            <button key="capture" className="launcher-item" onClick={onOpenCapture} aria-label="Capture & OCR">
+            <m.button key="capture" {...itemMotion} className="launcher-item" onClick={onOpenCapture} aria-label="Capture & OCR">
               <span className="launcher-item__icon"><Camera size={16} /></span>
               <span className="launcher-item__copy"><strong>Capture</strong></span>
-            </button>
+            </m.button>
           );
         }
         return (
-          <button key="lock" className="launcher-item" onClick={onLock} aria-label={localize(language, 'Kunci Windows', 'Lock Windows')} title={localize(language, 'Kunci Windows', 'Lock Windows')}>
+          <m.button key="lock" {...itemMotion} className="launcher-item" onClick={onLock} aria-label={localize(language, 'Kunci Windows', 'Lock Windows')} title={localize(language, 'Kunci Windows', 'Lock Windows')}>
             <span className="launcher-item__icon"><LockKeyhole size={16} /></span>
             <span className="launcher-item__copy"><strong>{localize(language, 'Kunci', 'Lock')}</strong></span>
-          </button>
+          </m.button>
         );
       })}
-      {customShortcuts.map((shortcut) => (
-        <button
+      {customShortcuts.map((shortcut, index) => (
+        <m.button
           key={shortcut.id}
+          initial={{ opacity: 0, y: 6, scale: 0.94 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ delay: (effectiveItems.length + index) * 0.025, duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          whileHover={{ y: -2, scale: 1.03 }}
+          whileTap={{ scale: 0.94 }}
           className="launcher-item launcher-item--custom"
           onClick={() => onOpenCustomShortcut(shortcut.target)}
           aria-label={shortcut.label}
@@ -125,7 +137,7 @@ export default function Launcher({
         >
           <span className="launcher-item__icon"><ExternalLink size={15} /></span>
           <span className="launcher-item__copy"><strong>{shortcut.label}</strong></span>
-        </button>
+        </m.button>
       ))}
     </m.nav>
   );

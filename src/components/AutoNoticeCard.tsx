@@ -1,4 +1,4 @@
-import { m } from 'framer-motion';
+import { m, type Transition } from 'framer-motion';
 import {
   Activity, BatteryCharging, Bell, Bluetooth, Camera, Clipboard, ClipboardPaste, Copy, Download, Keyboard, Mic, Music2, Plug,
   PlugZap, Scissors, Sun, Volume2, VolumeX, Wifi, WifiOff, X
@@ -13,7 +13,7 @@ interface AutoNoticeCardProps {
   artwork: string | null;
   travelX: number;
   travelY: number;
-  transition: { duration: number; ease: number[] };
+  transition: Transition;
   onDismiss: () => void;
 }
 
@@ -165,7 +165,7 @@ export default function AutoNoticeCard({
             <m.span
               initial={{ width: `${Math.max(0, Math.min(notice.previousVolumeLevel ?? 0, 100))}%` }}
               animate={{ width: `${Math.max(0, Math.min(notice.volumeLevel, 100))}%` }}
-              transition={{ duration: 0.35, ease: 'easeOut' }}
+              transition={{ type: 'spring', stiffness: 420, damping: 28 }}
             />
           </div>
         )}
@@ -174,7 +174,7 @@ export default function AutoNoticeCard({
             <m.span
               initial={{ width: '20%' }}
               animate={{ width: `${Math.max(10, Math.min(brightnessLevel, 100))}%` }}
-              transition={{ duration: 0.4, ease: 'easeOut' }}
+              transition={{ type: 'spring', stiffness: 380, damping: 28 }}
             />
           </div>
         )}

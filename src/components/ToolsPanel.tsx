@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import AiChatTab from './AiChatTab';
 import LayoutEditor from './LayoutEditor';
+import SlideDigits from './SlideDigits';
 import { localize, type AppLanguage } from '../lib/i18n';
 import { readAppSetting, saveAppSetting } from '../lib/storage';
 import type { AnimationSpeed, ClickThroughMode, ClockFormat, DateFormatStyle, IslandShapeStyle, WindhawkSettings } from '../lib/appearanceSettings';
@@ -850,6 +851,14 @@ export default function ToolsPanel({
             className={tab === item.id ? 'tools-tab is-active' : 'tools-tab'}
             onClick={() => setTab(item.id)}
           >
+            {tab === item.id && (
+              <m.span
+                layoutId="tools-tab-active-pill"
+                className="tools-tab__active-pill"
+                transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                aria-hidden="true"
+              />
+            )}
             <span className="tools-tab__icon">{tabsIcon[item.id]}</span>
             {layoutSettings.toolsTabLabels && !isVerticalLayout && (
               <span className="tools-tab__label">{item.label}</span>
@@ -870,7 +879,7 @@ export default function ToolsPanel({
         {tab === 'focus' && (
           <div className="tool-card focus-card">
             <span className="focus-status">{isBreak ? localize(language, 'Istirahat', 'Break') : localize(language, 'Fokus', 'Focus')}{sessions > 0 ? ` · ${sessions} ${localize(language, 'selesai', 'completed')}` : ''}</span>
-            <strong className="focus-countdown">{formatTime(remaining)}</strong>
+            <strong className="focus-countdown"><SlideDigits value={formatTime(remaining)} /></strong>
             <div className="focus-actions">
               <button className="tool-primary" onClick={() => setRunning((value) => !value)}>{running ? <Pause size={15} /> : <Play size={15} />}{running ? localize(language, 'Jeda', 'Pause') : localize(language, 'Mulai', 'Start')}</button>
               <button className="tool-icon-button" aria-label={localize(language, 'Atur ulang timer', 'Reset timer')} onClick={resetFocus}><RotateCcw size={15} /></button>

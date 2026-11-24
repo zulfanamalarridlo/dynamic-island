@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Activity, Battery, BatteryCharging, Cpu, HardDrive, Pin, Wifi, X } from 'lucide-react';
-import { m } from 'framer-motion';
+import { m, type Transition } from 'framer-motion';
 import { localize, type AppLanguage } from '../lib/i18n';
 
 interface SystemMonitorDetailProps {
@@ -20,7 +20,7 @@ interface SystemMonitorDetailProps {
   netTxBytesPerSec: number | null;
   travelX: number;
   travelY: number;
-  transition: { duration: number; ease: number[] };
+  transition: Transition;
   onClose: () => void;
 }
 
